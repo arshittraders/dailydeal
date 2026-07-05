@@ -141,8 +141,7 @@ ddl_orders: {id,gmail,name,orderId,platform,offerId,dealId,productCode,mediatorC
 ddl_mediators: {id,name,code,upi,pass,createdAt}
 */
 
-const view = Q.get('v') || 'home';
-({home:renderHome, buyer:renderBuyer, client:renderClient, mediator:renderMediator, admin:renderAdmin}[view]||renderHome)();
+// (router moved to end of script)
 
 // ══════════ HOME ══════════
 function renderHome(){
@@ -613,6 +612,9 @@ function adminShots(id){
   const w=window.open('','_blank');
   w.document.write('<body style="background:#111;display:flex;gap:20px;flex-wrap:wrap;padding:20px;">'+(o.screenshot?'<div><p style="color:#fff;font-family:sans-serif;">Order Screenshot</p><img src="'+o.screenshot+'" style="max-width:420px;border-radius:10px;"></div>':'<p style="color:#fff;">No order screenshot</p>')+(o.refund&&o.refund.reviewShot?'<div><p style="color:#fff;font-family:sans-serif;">Review Screenshot</p><img src="'+o.refund.reviewShot+'" style="max-width:420px;border-radius:10px;"></div>':'')+'</body>');
 }
+
+const view = Q.get('v') || 'home';
+({home:renderHome, buyer:renderBuyer, client:renderClient, mediator:renderMediator, admin:renderAdmin}[view]||renderHome)();
 </script>
 </body>
 </html>
