@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DDL — Daily Deals Legends</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4F46E5">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
@@ -173,6 +177,11 @@ function renderHome(){
       <a class="home-link" href="?v=buyer"><div class="ic">🛍️</div><div><div class="t">Buyer Portal</div><div class="s">Order form · Refund form · Order status</div></div></a>
       <a class="home-link" href="?v=client"><div class="ic">🏪</div><div><div class="t">Client Portal</div><div class="s">Product code daalo, sab order details dekho</div></div></a>
       <a class="home-link" href="?v=mediator"><div class="ic">🤝</div><div><div class="t">Mediator Portal</div><div class="s">Apni deals, orders, wallet</div></div></a>
+    </div>
+    <div class="card" style="margin-top:20px;text-align:center;">
+      <div style="font-weight:800;font-family:Sora;margin-bottom:6px;">🔔 Nayi Deal ka Alarm</div>
+      <div class="muted" style="margin-bottom:10px;">ON karo — nayi deal aate hi Swiggy jaisa alarm bajega (app/page khula hona chahiye)</div>
+      ${alertBtnHtml('deals')}
     </div>
     <div class="card" style="margin-top:20px;">
       <div style="font-weight:800;font-family:Sora;margin-bottom:8px;">🔗 Share Links (tap = copy)</div>
@@ -564,6 +573,7 @@ async function adminMain(tab){
       <div class="stat"><div class="v" style="color:var(--accent);">₹${totalAdminEarn}</div><div class="k">My Earnings</div></div>
       <div class="stat"><div class="v">${meds.length}</div><div class="k">Mediators</div></div>
     </div>
+    <div style="text-align:center;margin-bottom:14px;">${alertBtnHtml('orders')} <span class="muted">Naya order aate hi alarm</span></div>
     <div class="tabbtns">
       <button class="${tab==='orders'?'on':''}" onclick="adminMain('orders')">📦 Orders</button>
       <button class="${tab==='deals'?'on':''}" onclick="adminMain('deals')">🎁 Deals</button>
@@ -742,8 +752,92 @@ function adminShots(id){
   w.document.write(h+'</body>');
 }
 
+// ══════════ ALARM / NOTIFICATIONS (Swiggy-style) ══════════
+if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('sw.js'); }catch(e){} }
+
+let _alarmTimer=null, _audioCtx=null;
+function playAlarm(times){
+  try{
+    _audioCtx=_audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const ctx=_audioCtx; let t=ctx.currentTime;
+    for(let i=0;i<(times||3);i++){
+      [880,1174,1568].forEach((f,j)=>{
+        const o=ctx.createOscillator(), g=ctx.createGain();
+        o.type='sine'; o.frequency.value=f;
+        g.gain.setValueAtTime(0.0001,t+j*0.15);
+        g.gain.exponentialRampToValueAtTime(0.4,t+j*0.15+0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+j*0.15+0.3);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t+j*0.15); o.stop(t+j*0.15+0.35);
+      });
+      t+=0.7;
+    }
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate([300,150,300,150,600]);
+}
+function notify(title,body){
+  if(Notification&&Notification.permission==='granted'){
+    try{ new Notification(title,{body,icon:'icon-192.png'}); }catch(e){}
+  }
+}
+function alertBtnHtml(kind){
+  const on=localStorage.getItem('ddl_alerts_'+kind)==='1';
+  return `<button class="btn ${on?'btn-green':'btn-outline'}" id="alert-btn" onclick="toggleAlerts('${kind}')">${on?'🔔 Alerts ON':'🔕 Alerts OFF — Tap to turn ON'}</button>`;
+}
+async function toggleAlerts(kind){
+  const key='ddl_alerts_'+kind;
+  if(localStorage.getItem(key)==='1'){
+    localStorage.setItem(key,'0');
+    if(_alarmTimer){clearInterval(_alarmTimer);_alarmTimer=null;}
+    document.getElementById('alert-btn').className='btn btn-outline';
+    document.getElementById('alert-btn').textContent='🔕 Alerts OFF — Tap to turn ON';
+    return;
+  }
+  if(Notification&&Notification.permission!=='granted') await Notification.requestPermission();
+  localStorage.setItem(key,'1');
+  playAlarm(1); // test sound + unlock audio
+  document.getElementById('alert-btn').className='btn btn-green';
+  document.getElementById('alert-btn').textContent='🔔 Alerts ON';
+  startAlertLoop(kind);
+}
+function startAlertLoop(kind){
+  if(_alarmTimer) clearInterval(_alarmTimer);
+  const seenKey='ddl_seen_'+kind;
+  _alarmTimer=setInterval(async()=>{
+    try{
+      const st=await loadStore(true);
+      if(kind==='deals'){
+        const active=(st.deals||[]).filter(d=>d.type==='offer'&&d.active&&d.buyerLess!=null);
+        const seen=JSON.parse(localStorage.getItem(seenKey)||'[]');
+        const fresh=active.filter(d=>!seen.includes(d.id));
+        if(seen.length&&fresh.length){
+          playAlarm(4);
+          notify('🛍️ NEW DEAL AAYI HAI!', fresh[0].productName+' — abhi check karo!');
+        }
+        localStorage.setItem(seenKey,JSON.stringify(active.map(d=>d.id)));
+      } else {
+        const orders=st.orders||[];
+        const seen=JSON.parse(localStorage.getItem(seenKey)||'[]');
+        const fresh=orders.filter(o=>!seen.includes(o.id));
+        if(seen.length&&fresh.length){
+          playAlarm(4);
+          notify('📦 NAYA ORDER AAYA!', fresh.length+' naya order — '+(fresh[0].name||''));
+        }
+        localStorage.setItem(seenKey,JSON.stringify(orders.map(o=>o.id)));
+      }
+    }catch(e){}
+  }, 45000);
+}
+function resumeAlerts(){
+  ['deals','orders'].forEach(k=>{ if(localStorage.getItem('ddl_alerts_'+k)==='1'){
+    const pageKind=(view==='admin')?'orders':'deals';
+    if(k===pageKind) startAlertLoop(k);
+  }});
+}
+
 const view = Q.get('v') || 'home';
 ({home:renderHome, buyer:renderBuyer, client:renderClient, mediator:renderMediator, admin:renderAdmin}[view]||renderHome)();
+setTimeout(resumeAlerts,1000);
 </script>
 </body>
 </html>
