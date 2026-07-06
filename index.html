@@ -124,6 +124,15 @@ const TSHEET = { ddl_mediators:'MEDIATORS', ddl_deals:'DEALS', ddl_orders:'ORDER
 let _cache = null, _cacheAt = 0, _pending = null;
 const CACHE_TTL = 20000; // 20s — GAS backend is slow, avoid hammering it on every tab switch
 
+// ── Persist cache across page reloads so UI can render instantly with last-known data ──
+function persistCache(){ try{ localStorage.setItem('ddl_cache_v1', JSON.stringify({data:_cache, at:_cacheAt})); }catch(e){} }
+(function restoreCache(){
+  try{
+    const raw = localStorage.getItem('ddl_cache_v1');
+    if(raw){ const o = JSON.parse(raw); if(o && o.data){ _cache = o.data; _cacheAt = o.at||0; } }
+  }catch(e){}
+})();
+
 async function loadStore(force){
   if(!force && _cache && (Date.now()-_cacheAt) < CACHE_TTL) return _cache;
   if(_pending) return _pending; // dedupe: concurrent callers share the same in-flight fetch
@@ -132,11 +141,14 @@ async function loadStore(force){
     const j = await r.json();
     if(!j.ok){ alert('⚠️ Backend error: '+j.error); throw new Error(j.error); }
     _cache = j.data; _cacheAt = Date.now();
+    persistCache();
     return _cache;
   })();
   try { return await _pending; }
   finally { _pending = null; }
 }
+// Warm the cache the moment the page opens — by the time user taps into a view, data is likely already fresh
+loadStore().catch(()=>{});
 async function dbAll(t,force){
   try { const st = await loadStore(force); return st[TMAP[t]] || []; }
   catch(e){ console.error(e); return []; }
@@ -147,9 +159,9 @@ async function gsPost(payload){
   if(!j.ok){ alert('❌ '+(j.error||'Save failed')); throw new Error(j.error); }
   return j;
 }
-async function dbIns(t,o){ const r=await gsPost({action:'insert', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache) (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); return saved; }
-async function dbUpd(t,o){ const r=await gsPost({action:'update', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; } return saved; }
-async function dbDel(t,id){ await gsPost({action:'delete', table:TSHEET[t], id}); if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); } }
+async function dbIns(t,o){ const r=await gsPost({action:'insert', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); persistCache(); } return saved; }
+async function dbUpd(t,o){ const r=await gsPost({action:'update', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; persistCache(); } return saved; }
+async function dbDel(t,id){ await gsPost({action:'delete', table:TSHEET[t], id}); if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); persistCache(); } }
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function today(){ return new Date().toISOString().split('T')[0]; }
