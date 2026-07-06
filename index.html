@@ -185,6 +185,8 @@ function renderHome(){
 
 // ══════════ BUYER CHATBOT ══════════
 let msgs, CS;
+function savedGmail(){ return localStorage.getItem('ddl_gmail')||''; }
+
 function renderBuyer(){
   V.innerHTML = `<div class="wrap">
     <div class="topbrand"><div class="brand">⚡ DDL Assistant</div><div class="sub">Buyer Support Agent</div></div>
@@ -195,121 +197,163 @@ function renderBuyer(){
     </div>
   </div>`;
   msgs=document.getElementById('cm');
-  CS={step:'menu',order:{},offerFromLink:Q.get('deal')||null};
-  if(CS.offerFromLink){
-    botSay('Namaste! 🙏 Main DDL Agent hoon.\nAapke liye ek special deal ready hai! Details load kar raha hoon...');
-    loadLinkedOffer();
-  } else {
-    botSay('Namaste! 🙏 Main DDL Agent hoon.\nMain aapki kaise help kar sakta hoon?');
-    showOpts(['📝 Order Form','💸 Refund Form','🔍 Order Status']);
+  CS={step:'', order:{}, offerFromLink:Q.get('deal')||null};
+  const g=savedGmail();
+  if(!g){
+    CS.step='g';
+    botSay('Namaste! 🙏 Main DDL Agent hoon.\n\nPehli baar aaye hain — apna Gmail address batayiye (yeh sirf ek baar poochha jayega, system mein save rahega):');
+    return;
   }
+  CS.order.gmail=g;
+  if(CS.offerFromLink){ botSay('Namaste! 🙏 ('+g+')\nAapki deal load ho rahi hai...'); loadLinkedOffer(); return; }
+  mainMenu('Namaste! 🙏 ('+g+')');
+}
+function mainMenu(prefix){
+  CS.step='code';
+  botSay((prefix?prefix+'\n\n':'')+'Product Code ya Deal Code daaliye:\n• Sirf code (e.g. 1001) → DDL ki deal\n• MEDIATOR-CODE (e.g. ANKITA-1001) → mediator ki deal\n\nYa neeche se option choose karein:');
+  showOpts(['💸 Refund Form','🔍 Order Status','✉️ Change Gmail']);
 }
 async function loadLinkedOffer(){
   const deals=await dbAll('ddl_deals');
-  const of=deals.find(d=>d.id===CS.offerFromLink&&d.type==='offer');
-  if(!of||!of.active||of.buyerLess==null){ botSay('❌ Yeh deal link ab active nahi hai. Mediator se naya link maangein.'); CS.offerFromLink=null; showOpts(['📝 Order Form','💸 Refund Form','🔍 Order Status']); return; }
-  CS.linkedOffer=of;
-  const refundAmt=of.price-of.buyerLess;
-  botSay('🎁 Deal Details:\n\n📦 '+of.productName+' ('+of.productCode+')\n💰 Price: ₹'+of.price+'\n🔻 Less: ₹'+of.buyerLess+'\n✅ Aapko refund milega: ₹'+refundAmt+'\n🤝 Mediator: '+of.mediatorCode+'\n\nKya karna chahenge?');
-  showOpts(['📝 Order Form','💸 Refund Form','🔍 Order Status']);
+  const of=deals.find(d=>d.id===CS.offerFromLink&&d.type==='offer'&&d.active&&d.buyerLess!=null);
+  if(!of){ botSay('❌ Yeh deal link active nahi hai. Mediator se naya link maangein.'); mainMenu(''); return; }
+  showDeal(of);
+}
+function showDeal(of){
+  CS.offer=of; CS.step='confirm';
+  const refund=(+of.price||0)-(+of.buyerLess||0);
+  let html='<div style="font-weight:800;margin-bottom:6px;">🎁 Deal Details</div>';
+  if(of.image) html+='<img src="'+of.image+'" style="max-width:200px;border-radius:10px;margin-bottom:8px;">';
+  html+='📦 <b>'+esc(of.productName)+'</b> ('+esc(of.productCode)+')\n💰 Price: ₹'+esc(of.price)+'\n🔻 Less: ₹'+esc(of.buyerLess)+'\n✅ <b>Refund milega: ₹'+refund+'</b>\n🤝 By: '+esc(of.mediatorCode);
+  botSay(html.replace(/\\n/g,'<br>'),true);
+  showOpts(['🛒 Order Karna Hai','🔙 Back']);
 }
 function botSay(t,html){ const d=document.createElement('div'); d.className='msg bot'; if(html)d.innerHTML=t; else d.textContent=t; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
 function userSay(t){ const d=document.createElement('div'); d.className='msg user'; d.textContent=t; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
 function showOpts(arr){ const w=document.createElement('div'); w.className='chat-opts'; arr.forEach(o=>{ const b=document.createElement('button'); b.className='chat-opt'; b.textContent=o; b.onclick=()=>{ w.remove(); userSay(o); handleChat(o); }; w.appendChild(b); }); msgs.appendChild(w); msgs.scrollTop=msgs.scrollHeight; }
-function showUpload(){ const w=document.createElement('div'); w.className='chat-opts'; const b=document.createElement('button'); b.className='chat-opt'; b.textContent='📸 Upload Screenshot'; b.onclick=()=>{ const f=document.createElement('input'); f.type='file'; f.accept='image/*'; f.onchange=async e=>{ if(!e.target.files[0])return; w.remove(); const img=await compressImg(e.target.files[0]); const d=document.createElement('div'); d.className='msg user'; d.innerHTML='<img src="'+img+'">'; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; handleChat(img); }; f.click(); }; w.appendChild(b); msgs.appendChild(w); msgs.scrollTop=msgs.scrollHeight; }
+function showUpload(label){ const w=document.createElement('div'); w.className='chat-opts'; const b=document.createElement('button'); b.className='chat-opt'; b.textContent=label||'📸 Upload Screenshot'; b.onclick=()=>{ const f=document.createElement('input'); f.type='file'; f.accept='image/*'; f.onchange=async e=>{ if(!e.target.files[0])return; w.remove(); const img=await compressImg(e.target.files[0]); const d=document.createElement('div'); d.className='msg user'; d.innerHTML='<img src="'+img+'">'; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; handleChat(img); }; f.click(); }; w.appendChild(b); msgs.appendChild(w); msgs.scrollTop=msgs.scrollHeight; }
 function sendChat(){ const i=document.getElementById('ci'); const t=i.value.trim(); if(!t)return; i.value=''; userSay(t); handleChat(t); }
+
+function statusView(o){
+  const idx=STATUS_FLOW.indexOf(o.status);
+  let tl='<div style="font-weight:800;margin-bottom:8px;">📦 '+esc(o.orderId)+' · '+esc(o.productCode||'')+'</div><div class="timeline">';
+  STATUS_FLOW.forEach((st,i)=>{
+    const done=i<=idx;
+    const h=(o.history||[]).find(x=>x.s===st);
+    tl+='<div class="tl-step"><div class="tl-dot"><div class="c '+(done?'done':'')+'">'+(done?'✓':(i+1))+'</div>'+(i<STATUS_FLOW.length-1?'<div class="l '+(i<idx?'done':'')+'"></div>':'')+'</div><div class="tl-txt">'+st+(h?'<div class="d">'+h.d+'</div>':'')+'</div></div>';
+  });
+  tl+='</div>';
+  if(o.status==='Refunded') tl+='<div class="alert a-ok" style="margin:6px 0 0;">✅ REFUND DONE: ₹'+esc(o.refund&&o.refund.amount!=null?o.refund.amount:((+o.price||0)-(+o.buyerLess||0)))+'</div>';
+  else if(o.status==='Refund Form Filled') tl+='<div class="alert a-warn" style="margin:6px 0 0;">⏳ Refund PENDING — process ho raha hai</div>';
+  else tl+='<div class="muted">Expected refund: ₹'+((+o.price||0)-(+o.buyerLess||0))+'</div>';
+  if(o.adminNote) tl+='<div class="alert a-err" style="margin:6px 0 0;">📢 Admin: '+esc(o.adminNote)+'</div>';
+  return tl;
+}
 
 async function handleChat(input){
   const s=CS;
-  if(s.step==='menu'){
-    if(input.includes('Order Form')){ s.step='o_gmail'; s.order={}; botSay('Great! Order form shuru karte hain. 📝\n\nApna Gmail address batayiye:'); return; }
-    if(input.includes('Refund Form')){ s.step='r_find'; botSay('Refund ke liye apna Order ID ya Gmail batayiye:'); return; }
-    if(input.includes('Order Status')){ s.step='s_find'; botSay('Order ID ya Gmail batayiye: 🔍'); return; }
-    botSay('Neeche se select karein:'); showOpts(['📝 Order Form','💸 Refund Form','🔍 Order Status']); return;
+  // Global options available from code step
+  if(s.step==='code'||s.step==='confirm'){
+    if(input.includes('Refund Form')){ s.step='r_find'; botSay('Apna Order ID batayiye:'); return; }
+    if(input.includes('Order Status')){ s.step='s_find'; botSay('Apna Order ID batayiye: 🔍'); return; }
+    if(input.includes('Change Gmail')){ s.step='g'; botSay('Naya Gmail address batayiye:'); return; }
   }
-  if(s.step==='o_gmail'){
+  // GMAIL (once)
+  if(s.step==='g'){
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input)){ botSay('❌ Valid email daaliye (e.g. name@gmail.com):'); return; }
-    s.order.gmail=input; s.step='o_name'; botSay('✅ Saved!\n\nApna Full Name batayiye:'); return;
+    localStorage.setItem('ddl_gmail',input);
+    CS.order.gmail=input;
+    botSay('✅ Gmail save ho gaya! Ab dobara nahi poochha jayega.');
+    if(CS.offerFromLink){ loadLinkedOffer(); return; }
+    mainMenu(''); return;
   }
+  // PRODUCT/DEAL CODE
+  if(s.step==='code'){
+    const raw=input.trim().toUpperCase();
+    const deals=await dbAll('ddl_deals');
+    const offers=deals.filter(d=>d.type==='offer'&&d.active&&d.buyerLess!=null);
+    let of=null;
+    if(raw.includes('-')){
+      of=offers.find(d=>((d.mediatorCode+'-'+d.productCode).toUpperCase()===raw));
+    } else {
+      of=offers.find(d=>d.mediatorCode===ADMIN_CODE&&String(d.productCode).toUpperCase()===raw);
+    }
+    if(!of){ botSay('❌ Is code par koi active deal nahi mili.\n\n• DDL deal: sirf product code (e.g. 1001)\n• Mediator deal: MEDIATOR-CODE (e.g. ANKITA-1001)\n\nDobara try karein:'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
+    showDeal(of); return;
+  }
+  // DEAL CONFIRM
+  if(s.step==='confirm'){
+    if(input.includes('Back')){ mainMenu(''); return; }
+    if(input.includes('Order Karna Hai')){
+      const of=s.offer;
+      s.order.offerId=of.id; s.order.dealId=of.dealId; s.order.productCode=of.productCode;
+      s.order.mediatorCode=of.mediatorCode; s.order.adminLess=+of.adminLess||0; s.order.buyerLess=+of.buyerLess||0;
+      s.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); s.order.price=+of.price||0;
+      s.step='o_name'; botSay('Apna Full Name batayiye:'); return;
+    }
+  }
+  // ORDER FLOW
   if(s.step==='o_name'){ s.order.name=input; s.step='o_orderid'; botSay('Apna Order ID batayiye:'); return; }
   if(s.step==='o_orderid'){
     const all=await dbAll('ddl_orders');
-    if(all.find(o=>o.orderId===input)){ botSay('⚠️ Yeh Order ID already registered hai! Status check karne ke liye menu use karein.'); s.step='menu'; showOpts(['🔍 Order Status','📝 Order Form']); return; }
-    s.order.orderId=input; s.step='o_platform'; botSay('Kis platform se order kiya?'); showOpts(['Meesho','Amazon','Flipkart']); return;
+    if(all.find(o=>o.orderId===input)){ botSay('⚠️ Yeh Order ID already registered hai!'); mainMenu(''); return; }
+    s.order.orderId=input; s.order.platform='';
+    s.step='o_platform'; botSay('Kis platform se order kiya?'); showOpts(['Meesho','Amazon','Flipkart']); return;
   }
-  if(s.step==='o_platform'){
-    s.order.platform=input;
-    if(s.linkedOffer){ applyOffer(s.linkedOffer); return; }
-    s.step='o_deal'; botSay('Deal Code batayiye (mediator ne diya hoga, e.g. NITIN10-PRD001):'); return;
-  }
-  if(s.step==='o_deal'){
-    const deals=await dbAll('ddl_deals');
-    const code=input.trim().toUpperCase();
-    const of=deals.find(d=>d.type==='offer'&&d.active&&d.buyerLess!=null&&((d.mediatorCode+'-'+d.productCode).toUpperCase()===code||d.id===input));
-    if(!of){ botSay('❌ Yeh Deal Code active nahi mila. Format: MEDIATORCODE-PRODUCTCODE (mediator se confirm karein):'); return; }
-    applyOffer(of); return;
-  }
+  if(s.step==='o_platform'){ s.order.platform=input; s.step='o_shot'; botSay('Order ka screenshot upload karein: 📸'); showUpload(); return; }
   if(s.step==='o_shot'){
     s.order.screenshot=input;
-    const o={ id:'ord_'+Date.now(), ...s.order, status:'Ordered', orderDate:today(), refund:{}, history:[{s:'Ordered',d:today()}] };
-    await dbIns('ddl_orders',o);
-    botSay('🎉 Order successfully registered!\n\n📋 Order ID: '+o.orderId+'\n📦 '+o.productCode+'\n💵 Refund milega: ₹'+(o.price-o.buyerLess)+'\n\n⏳ '+REFUND_WAIT_DAYS+' din baad review karke Refund Form bharein.\n✉️ Confirmation aapke Gmail pe process hoga.');
-    s.step='menu'; showOpts(['🔍 Order Status','💸 Refund Form']); return;
+    botSay('⏳ Order register ho raha hai...');
+    let o={ id:'ord_'+Date.now(), ...s.order, status:'Ordered', orderDate:today(), refund:{}, history:[{s:'Ordered',d:today()}] };
+    o=await dbIns('ddl_orders',o)||o;
+    botSay('🎉 Order successfully registered!\n\nYeh raha aapka current status: 👇');
+    botSay(statusView(o),true);
+    botSay('✅ Confirm ho gaya! '+REFUND_WAIT_DAYS+' din baad review/rating karke Refund Form bharein. Order ID sambhal ke rakhein: '+o.orderId);
+    mainMenu(''); return;
   }
+  // REFUND FLOW
   if(s.step==='r_find'){
     const all=await dbAll('ddl_orders');
-    const found=all.filter(o=>o.orderId===input||o.gmail===input);
-    if(!found.length){ botSay('❌ Koi order nahi mila. Dobara check karein:'); return; }
-    const o=found[found.length-1];
-    if(o.status==='Refunded'){ botSay('✅ Refund already ho chuka: ₹'+(o.refund.amount||'-')); s.step='menu'; showOpts(['🔍 Order Status']); return; }
-    if(o.status==='Refund Form Filled'){ botSay('⏳ Refund form already submitted — process ho raha hai.'); s.step='menu'; showOpts(['🔍 Order Status']); return; }
+    const o=all.find(x=>x.orderId===input)||all.filter(x=>x.gmail===input).pop();
+    if(!o){ botSay('❌ Koi order nahi mila. Order ID dobara check karein:'); return; }
+    botSay(statusView(o),true);
+    if(o.status==='Refunded'){ mainMenu(''); return; }
+    if(o.status==='Refund Form Filled'){ botSay('⏳ Refund form already submitted hai.'); mainMenu(''); return; }
     const days=daysBetween(o.orderDate,today());
-    if(days<REFUND_WAIT_DAYS){ botSay('⏳ Abhi refund form nahi khul sakta.\n\nOrder date: '+o.orderDate+'\n'+days+' din hue — '+(REFUND_WAIT_DAYS-days)+' din baaki.\n\nTab tak review kar dein! ⭐'); s.step='menu'; showOpts(['🔍 Order Status']); return; }
-    s.refOrder=o; s.step='r_review'; botSay('✅ Order: '+o.orderId+' ('+o.productCode+')\nRefund banega: ₹'+(o.price-o.buyerLess)+'\n\nKya product ka review kar diya hai?'); showOpts(['✅ Haan, ho gaya','❌ Abhi nahi']); return;
+    if(days<REFUND_WAIT_DAYS){ botSay('⏳ Refund form '+REFUND_WAIT_DAYS+' din baad khulega.\nAbhi '+days+' din hue — '+(REFUND_WAIT_DAYS-days)+' din baaki.\nTab tak review/rating kar dein! ⭐'); mainMenu(''); return; }
+    s.refOrder=o; s.step='r_type';
+    botSay('✅ Refund form khul gaya!\n\nAapne kya kiya hai — Rating ya Review?\n\n⭐ Rating → Rating + Seller Feedback dono screenshots dene honge\n📝 Review → sirf Review screenshot');
+    showOpts(['⭐ Rating','📝 Review']); return;
   }
-  if(s.step==='r_review'){
-    if(input.includes('nahi')||input.includes('Nahi')||input.includes('❌')){ botSay('Pehle review zaroori hai! ⭐ Review karke wapas aayein.'); s.step='menu'; showOpts(['💸 Refund Form']); return; }
-    s.step='r_shot'; botSay('Review ka screenshot upload karein: 📸'); showUpload(); return;
+  if(s.step==='r_type'){
+    if(input.includes('Rating')){ s.refType='Rating'; s.refShots=[]; s.step='r_shot_rating'; botSay('⭐ Rating ka screenshot upload karein:'); showUpload('📸 Rating Screenshot'); return; }
+    if(input.includes('Review')){ s.refType='Review'; s.refShots=[]; s.step='r_shot_review'; botSay('📝 Review ka screenshot upload karein:'); showUpload('📸 Review Screenshot'); return; }
+    botSay('Rating ya Review select karein:'); showOpts(['⭐ Rating','📝 Review']); return;
   }
-  if(s.step==='r_shot'){ s.refShot=input; s.step='r_upi'; botSay('Apna UPI ID batayiye (e.g. name@paytm):'); return; }
+  if(s.step==='r_shot_rating'){ s.refShots.push(input); s.step='r_shot_feedback'; botSay('✅ Rating screenshot mil gaya!\n\nAb Seller Feedback ka screenshot upload karein (compulsory):'); showUpload('📸 Seller Feedback Screenshot'); return; }
+  if(s.step==='r_shot_feedback'){ s.refShots.push(input); s.step='r_upi'; botSay('✅ Dono screenshots mil gaye!\n\nApna UPI ID batayiye (e.g. name@paytm):'); return; }
+  if(s.step==='r_shot_review'){ s.refShots.push(input); s.step='r_upi'; botSay('✅ Review screenshot mil gaya!\n\nApna UPI ID batayiye (e.g. name@paytm):'); return; }
   if(s.step==='r_upi'){
+    if(!input.includes('@')){ botSay('❌ Valid UPI ID daaliye (e.g. name@paytm):'); return; }
+    botSay('⏳ Submit ho raha hai...');
     const o=s.refOrder;
     o.status='Refund Form Filled';
-    o.refund={ upi:input, reviewShot:s.refShot, filledDate:today() };
-    o.history=(o.history||[]); o.history.push({s:'Refund Form Filled',d:today()});
+    o.refund={ upi:input, type:s.refType, shots:[...s.refShots], filledDate:today() };
+    o.history=o.history||[]; o.history.push({s:'Refund Form Filled',d:today()});
     await dbUpd('ddl_orders',o);
-    botSay('🎉 Refund form submitted!\n\n💳 UPI: '+input+'\n💵 Expected refund: ₹'+(o.price-o.buyerLess)+'\n\nAdmin verify karke refund karega. Status yahan check karte rahiye! ✅');
-    s.step='menu'; showOpts(['🔍 Order Status']); return;
+    botSay('🎉 Refund form submitted!\n\n📋 Type: '+s.refType+'\n💳 UPI: '+input+'\n💵 Expected: ₹'+((+o.price||0)-(+o.buyerLess||0))+'\n\nAdmin verify karke refund karega. Order ID daal kar kabhi bhi status check karein — Done hone par yahin dikhega, koi dikkat hui toh admin ka comment bhi yahin aayega. ✅');
+    mainMenu(''); return;
   }
+  // STATUS
   if(s.step==='s_find'){
     const all=await dbAll('ddl_orders');
     const found=all.filter(o=>o.orderId===input||o.gmail===input);
     if(!found.length){ botSay('❌ Koi order nahi mila:'); return; }
-    for(const o of found){
-      const idx=STATUS_FLOW.indexOf(o.status);
-      let tl='<div style="font-weight:800;margin-bottom:8px;">📦 '+esc(o.orderId)+' · '+esc(o.productCode||'')+'</div><div class="timeline">';
-      STATUS_FLOW.forEach((st,i)=>{
-        const done=i<=idx;
-        const h=(o.history||[]).find(x=>x.s===st);
-        tl+='<div class="tl-step"><div class="tl-dot"><div class="c '+(done?'done':'')+'">'+(done?'✓':(i+1))+'</div>'+(i<STATUS_FLOW.length-1?'<div class="l '+(i<idx?'done':'')+'"></div>':'')+'</div><div class="tl-txt">'+st+(h?'<div class="d">'+h.d+'</div>':'')+'</div></div>';
-      });
-      tl+='</div>';
-      if(o.status==='Refunded'&&o.refund&&o.refund.amount!=null) tl+='<div class="alert a-ok" style="margin:6px 0 0;">💰 Refund done: ₹'+esc(o.refund.amount)+'</div>';
-      else tl+='<div class="muted">Expected refund: ₹'+(o.price-o.buyerLess)+'</div>';
-      if(o.adminNote) tl+='<div class="alert a-warn" style="margin:6px 0 0;">📢 Admin: '+esc(o.adminNote)+'</div>';
-      botSay(tl,true);
-    }
-    s.step='menu'; showOpts(['📝 Order Form','💸 Refund Form','🔍 Order Status']); return;
+    for(const o of found) botSay(statusView(o),true);
+    mainMenu(''); return;
   }
-}
-function applyOffer(of){
-  const s=CS;
-  s.order.offerId=of.id; s.order.dealId=of.dealId; s.order.productCode=of.productCode;
-  s.order.mediatorCode=of.mediatorCode; s.order.adminLess=+of.adminLess||0; s.order.buyerLess=+of.buyerLess||0;
-  s.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); s.order.price=+of.price||0;
-  s.step='o_shot';
-  botSay('✅ Deal confirm: '+of.productName+' ('+of.productCode+')\n💰 Price ₹'+of.price+' · Less ₹'+of.buyerLess+'\n✅ Refund milega: ₹'+(of.price-of.buyerLess)+'\n\nAb order ka screenshot upload karein: 📸');
-  showUpload();
+  // fallback
+  if(!s.step) mainMenu('');
 }
 
 // ══════════ CLIENT ══════════
@@ -500,7 +544,7 @@ function adminOrders(){
         <td>${esc(o.productCode)}</td>
         <td>${esc(o.mediatorCode)}</td>
         <td><span class="badge b-pink">₹${esc(o.buyerLess)}</span> <span class="badge b-yellow">₹${esc(o.adminLess)}</span> <span class="badge b-green">₹${esc(o.cut)}</span></td>
-        <td>${esc(o.refund&&o.refund.upi||'—')}</td>
+        <td>${esc(o.refund&&o.refund.upi||'—')}${o.refund&&o.refund.type?'<div class="muted">'+esc(o.refund.type)+'</div>':''}</td>
         <td>${statusBadge(o.status)}</td>
         <td style="white-space:nowrap;">
           <button class="btn btn-sm btn-outline" onclick="adminNext('${o.id}')">⏩</button>
@@ -520,11 +564,12 @@ function adminDeals(){
     <div class="card">
       <div style="font-weight:800;font-family:Sora;margin-bottom:12px;">➕ New Master Deal</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="field"><label>Product Code</label><input id="md-pc" placeholder="SHOES01"></div>
+        <div class="field"><label>Product Code</label><input id="md-pc" placeholder="1001"></div>
         <div class="field"><label>Product Name</label><input id="md-pn" placeholder="Running Shoes"></div>
         <div class="field"><label>Price (₹)</label><input id="md-price" type="number" placeholder="500"></div>
         <div class="field"><label>Total Qty</label><input id="md-qty" type="number" placeholder="20"></div>
       </div>
+      <div class="field"><label>Product Image</label><input type="file" id="md-img" accept="image/*"></div>
       <button class="btn btn-grad" onclick="createMaster()">💾 Create Deal</button>
     </div>
     ${masters.map(m=>{
@@ -566,7 +611,10 @@ async function createMaster(){
   const price=+document.getElementById('md-price').value||0;
   const qty=+document.getElementById('md-qty').value||0;
   if(!pc||!pn||!price){alert('Code, name, price required!');return;}
-  await dbIns('ddl_deals',{id:'deal_'+Date.now(),type:'master',productCode:pc,productName:pn,price,qty,createdAt:today()});
+  let image='';
+  const f=document.getElementById('md-img').files[0];
+  if(f) image=await compressImg(f);
+  await dbIns('ddl_deals',{id:'deal_'+Date.now(),type:'master',productCode:pc,productName:pn,price,qty,image,createdAt:today()});
   adminMain('deals');
 }
 async function assignOffer(dealId){
@@ -576,7 +624,7 @@ async function assignOffer(dealId){
   const adminLess=+document.getElementById('as-less-'+dealId).value;
   if(isNaN(adminLess)){alert('Admin Less daalo (0 bhi chal sakta hai full refund ke liye)!');return;}
   const isOwn=medCode===ADMIN_CODE;
-  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,
+  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',
     mediatorCode:medCode,adminLess,buyerLess:isOwn?adminLess:null,active:isOwn,createdAt:today()};
   await dbIns('ddl_deals',of);
   if(isOwn) alert('✅ Apne group ki deal ready! Link deals list mein hai — buyers ko share karo.');
@@ -631,7 +679,13 @@ async function adminNote(id){
 function adminShots(id){
   const o=window._D.orders.find(x=>x.id===id); if(!o)return;
   const w=window.open('','_blank');
-  w.document.write('<body style="background:#111;display:flex;gap:20px;flex-wrap:wrap;padding:20px;">'+(o.screenshot?'<div><p style="color:#fff;font-family:sans-serif;">Order Screenshot</p><img src="'+o.screenshot+'" style="max-width:420px;border-radius:10px;"></div>':'<p style="color:#fff;">No order screenshot</p>')+(o.refund&&o.refund.reviewShot?'<div><p style="color:#fff;font-family:sans-serif;">Review Screenshot</p><img src="'+o.refund.reviewShot+'" style="max-width:420px;border-radius:10px;"></div>':'')+'</body>');
+  let h='<body style="background:#111;display:flex;gap:20px;flex-wrap:wrap;padding:20px;">';
+  h+=(o.screenshot?'<div><p style="color:#fff;font-family:sans-serif;">Order Screenshot</p><img src="'+o.screenshot+'" style="max-width:420px;border-radius:10px;"></div>':'<p style="color:#fff;">No order screenshot</p>');
+  const shots=(o.refund&&o.refund.shots)||[];
+  const labels=o.refund&&o.refund.type==='Rating'?['Rating Screenshot','Seller Feedback']:['Review Screenshot'];
+  shots.forEach((s2,i)=>{ h+='<div><p style="color:#fff;font-family:sans-serif;">'+(labels[i]||'Screenshot '+(i+1))+'</p><img src="'+s2+'" style="max-width:420px;border-radius:10px;"></div>'; });
+  if(o.refund&&o.refund.reviewShot) h+='<div><p style="color:#fff;font-family:sans-serif;">Review Screenshot</p><img src="'+o.refund.reviewShot+'" style="max-width:420px;border-radius:10px;"></div>';
+  w.document.write(h+'</body>');
 }
 
 const view = Q.get('v') || 'home';
