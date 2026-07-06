@@ -121,18 +121,24 @@ const V = document.getElementById('view');
 // ── Google Sheets DB layer ──
 const TMAP = { ddl_mediators:'mediators', ddl_deals:'deals', ddl_orders:'orders' };
 const TSHEET = { ddl_mediators:'MEDIATORS', ddl_deals:'DEALS', ddl_orders:'ORDERS' };
-let _cache = null, _cacheAt = 0;
+let _cache = null, _cacheAt = 0, _pending = null;
+const CACHE_TTL = 20000; // 20s — GAS backend is slow, avoid hammering it on every tab switch
 
 async function loadStore(force){
-  if(!force && _cache && (Date.now()-_cacheAt) < 4000) return _cache;
-  const r = await fetch(GS_URL, { method:'GET' });
-  const j = await r.json();
-  if(!j.ok){ alert('⚠️ Backend error: '+j.error); throw new Error(j.error); }
-  _cache = j.data; _cacheAt = Date.now();
-  return _cache;
+  if(!force && _cache && (Date.now()-_cacheAt) < CACHE_TTL) return _cache;
+  if(_pending) return _pending; // dedupe: concurrent callers share the same in-flight fetch
+  _pending = (async()=>{
+    const r = await fetch(GS_URL, { method:'GET' });
+    const j = await r.json();
+    if(!j.ok){ alert('⚠️ Backend error: '+j.error); throw new Error(j.error); }
+    _cache = j.data; _cacheAt = Date.now();
+    return _cache;
+  })();
+  try { return await _pending; }
+  finally { _pending = null; }
 }
-async function dbAll(t){
-  try { const st = await loadStore(); return st[TMAP[t]] || []; }
+async function dbAll(t,force){
+  try { const st = await loadStore(force); return st[TMAP[t]] || []; }
   catch(e){ console.error(e); return []; }
 }
 async function gsPost(payload){
@@ -448,17 +454,17 @@ async function medLogin(){
   document.getElementById('med-auth').classList.add('hidden');
   medDash();
 }
-async function medDash(){
+async function medDash(force){
   const dash=document.getElementById('med-dash');
-  dash.innerHTML='<div class="alert a-info">⏳ Loading...</div>';
-  const deals=await dbAll('ddl_deals');
+  if(force || !dash.innerHTML.trim()) dash.innerHTML='<div class="alert a-info">⏳ Loading...</div>';
+  const deals=await dbAll('ddl_deals',force);
   const myOffers=deals.filter(d=>d.type==='offer'&&d.mediatorCode===MED.code);
-  const orders=(await dbAll('ddl_orders')).filter(o=>o.mediatorCode===MED.code);
+  const orders=(await dbAll('ddl_orders',force)).filter(o=>o.mediatorCode===MED.code);
   const wallet=orders.filter(o=>o.status==='Refunded').reduce((s,o)=>s+(+o.cut||0),0);
   const pending=orders.filter(o=>o.status!=='Refunded').reduce((s,o)=>s+(+o.cut||0),0);
   const b=baseUrl();
   dash.innerHTML=`
-    <div class="alert a-ok">👋 <strong>${esc(MED.name)}</strong> (${esc(MED.code)})</div>
+    <div class="alert a-ok">👋 <strong>${esc(MED.name)}</strong> (${esc(MED.code)}) <button class="btn btn-sm btn-outline" style="width:auto;float:right;" onclick="medDash(true)">🔄 Refresh</button></div>
     <div class="stat-row">
       <div class="stat"><div class="v grad-txt">${orders.length}</div><div class="k">Total Orders</div></div>
       <div class="stat"><div class="v" style="color:var(--accent);">₹${wallet}</div><div class="k">Wallet (Earned)</div></div>
@@ -548,9 +554,9 @@ function renderAdmin(){
   if(p!==ADMIN_PASS){ V.innerHTML='<div class="wrap"><div class="alert a-err">❌ Wrong password</div></div>'; return; }
   adminMain('orders');
 }
-async function adminMain(tab){
-  V.innerHTML='<div class="wrap wide"><div class="alert a-info">⏳ Loading...</div></div>';
-  const [deals,orders,meds]=await Promise.all([dbAll('ddl_deals'),dbAll('ddl_orders'),dbAll('ddl_mediators')]);
+async function adminMain(tab,force){
+  if(!window._D || force){ V.innerHTML='<div class="wrap wide"><div class="alert a-info">⏳ Loading...</div></div>'; }
+  const [deals,orders,meds]=await Promise.all([dbAll('ddl_deals',force),dbAll('ddl_orders',force),dbAll('ddl_mediators',force)]);
   window._D={deals,orders,meds};
   const masters=deals.filter(d=>d.type==='master');
   const offers=deals.filter(d=>d.type==='offer');
@@ -569,6 +575,7 @@ async function adminMain(tab){
       <button class="${tab==='deals'?'on':''}" onclick="adminMain('deals')">🎁 Deals</button>
       <button class="${tab==='meds'?'on':''}" onclick="adminMain('meds')">🤝 Mediators</button>
     </div>
+    <div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminMain('${tab}',true)">🔄 Refresh</button></div>
     <div id="admin-body"></div>
   </div>`;
   ({orders:adminOrders,deals:adminDeals,meds:adminMeds}[tab])();
