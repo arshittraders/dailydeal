@@ -170,25 +170,15 @@ ddl_mediators: {id,name,code,upi,pass,createdAt}
 
 // ══════════ HOME ══════════
 function renderHome(){
-  const b=baseUrl();
   V.innerHTML = `<div class="wrap">
     <div class="topbrand"><div class="brand">⚡ Daily Deals Legends</div><div class="sub">DDL Portal</div></div>
     <div class="home-links">
-      <a class="home-link" href="?v=buyer"><div class="ic">🛍️</div><div><div class="t">Buyer Portal</div><div class="s">Order form · Refund form · Order status</div></div></a>
-      <a class="home-link" href="?v=client"><div class="ic">🏪</div><div><div class="t">Client Portal</div><div class="s">Product code daalo, sab order details dekho</div></div></a>
-      <a class="home-link" href="?v=mediator"><div class="ic">🤝</div><div><div class="t">Mediator Portal</div><div class="s">Apni deals, orders, wallet</div></div></a>
+      <a class="home-link" href="?v=buyer"><div class="ic">🛍️</div><div><div class="t">Buyer</div><div class="s">Order · Refund · Status</div></div></a>
+      <a class="home-link" href="?v=client"><div class="ic">🏪</div><div><div class="t">Seller</div><div class="s">Apne product ke orders dekho</div></div></a>
+      <a class="home-link" href="?v=mediator"><div class="ic">🤝</div><div><div class="t">Mediator</div><div class="s">Deals · Orders · Wallet</div></div></a>
     </div>
-    <div class="card" style="margin-top:20px;text-align:center;">
-      <div style="font-weight:800;font-family:Sora;margin-bottom:6px;">🔔 Nayi Deal ka Alarm</div>
-      <div class="muted" style="margin-bottom:10px;">ON karo — nayi deal aate hi Swiggy jaisa alarm bajega (app/page khula hona chahiye)</div>
-      ${alertBtnHtml('deals')}
-    </div>
-    <div class="card" style="margin-top:20px;">
-      <div style="font-weight:800;font-family:Sora;margin-bottom:8px;">🔗 Share Links (tap = copy)</div>
-      <div class="muted">Buyer:</div><div class="copybox" onclick="copyTxt(this)">${b}?v=buyer</div>
-      <div class="muted">Client:</div><div class="copybox" onclick="copyTxt(this)">${b}?v=client</div>
-      <div class="muted">Mediator:</div><div class="copybox" onclick="copyTxt(this)">${b}?v=mediator</div>
-    </div>
+    <div style="text-align:center;margin-top:22px;">${alertBtnHtml('deals')}</div>
+    <div style="text-align:center;margin-top:26px;"><a href="?v=admin" style="font-size:12px;color:var(--text-3);text-decoration:none;">Admin Login</a></div>
   </div>`;
 }
 
@@ -381,7 +371,7 @@ async function handleChat(input){
 // ══════════ CLIENT ══════════
 function renderClient(){
   V.innerHTML = `<div class="wrap wide">
-    <div class="topbrand"><div class="brand">🏪 DDL Client Portal</div><div class="sub">Product Order Tracking</div></div>
+    <div class="topbrand"><div class="brand">🏪 DDL Seller Portal</div><div class="sub">Product Order Tracking</div></div>
     <div class="card" style="max-width:480px;margin:0 auto 18px;">
       <div class="field"><label>Product Code</label><input id="pc" placeholder="e.g. PRD001" onkeydown="if(event.key==='Enter')clientSearch()"></div>
       <button class="btn btn-grad" onclick="clientSearch()">🔍 View Orders</button>
