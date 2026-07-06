@@ -232,7 +232,7 @@ function showDeal(of,slotsLeft){
   const refund=(+of.price||0)-(+of.buyerLess||0);
   let html='<div style="font-weight:800;margin-bottom:6px;">🎁 Deal Details</div>';
   if(of.image) html+='<img src="'+of.image+'" style="max-width:200px;border-radius:10px;margin-bottom:8px;">';
-  html+='📦 <b>'+esc(of.productName)+'</b><br>💰 Price: ₹'+esc(of.price)+'<br>🔻 Less: ₹'+esc(of.buyerLess)+'<br>✅ <b>Refund milega: ₹'+refund+'</b>';
+  html+='📦 <b>'+esc(of.productName)+'</b>'+(of.dealType?' <span class="badge b-blue">'+esc(of.dealType)+' Deal</span>':'')+'<br>💰 Price: ₹'+esc(of.price)+'<br>🔻 Less: ₹'+esc(of.buyerLess)+'<br>✅ <b>Refund milega: ₹'+refund+'</b>'+(of.link?'<br>🔗 <a href="'+esc(of.link)+'" target="_blank" style="color:var(--primary);font-weight:800;">Product Link kholein</a>':'');
   if(of.qty&&slotsLeft!=null&&slotsLeft<999999) html+='<br>🎟️ Slots baaki: <b>'+slotsLeft+'</b>';
   botSay(html,true);
   showOpts(['🛒 Order Karna Hai','🔙 Back']);
@@ -489,7 +489,8 @@ async function medDash(){
               <span class="badge ${dOrders.length>=(+of.qty||9e9)?'b-red':'b-blue'}">${dOrders.length}/${esc(of.qty||'∞')} slots</span>
             </div>
             <div class="muted">Deal Code: <strong>${esc(of.mediatorCode)}-${esc(of.productCode)}</strong> · Link (tap=copy):</div>
-            <div class="copybox" onclick="copyTxt(this)">${b}?v=buyer&deal=${of.id}</div>`}
+            <div class="copybox" onclick="copyTxt(this)">${b}?v=buyer&deal=${of.id}</div>
+            <button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','med')">📲 WhatsApp Share Message</button>`}
         </div>`;
       }).join(''):'<div class="muted">Abhi koi deal assign nahi hui. Admin se contact karo.</div>'}
     </div>
@@ -501,7 +502,7 @@ async function medDash(){
       </table></div>`:'<div class="muted">Abhi koi order nahi.</div>'}
     </div>
     <button class="btn btn-outline" onclick="location.reload()">🚪 Logout</button>`;
-  window._offers=myOffers;
+  window._offers=myOffers; window._medOrders=orders;
 }
 async function setBuyerLess(offerId){
   const of=window._offers.find(x=>x.id===offerId); if(!of)return;
@@ -512,6 +513,34 @@ async function setBuyerLess(offerId){
   await dbUpd('ddl_deals',of);
   alert('✅ Deal activate! Tumhara cut: ₹'+(val-of.adminLess)+'/order');
   medDash();
+}
+
+// ══════════ WHATSAPP SHARE ══════════
+function buildShareMsg(of, ordersArr){
+  const used=(ordersArr||[]).filter(o=>o.offerId===of.id).length;
+  const left=of.qty?Math.max(0,(+of.qty)-used):'';
+  const code=of.mediatorCode===ADMIN_CODE?of.productCode:(of.mediatorCode+'-'+of.productCode);
+  const refund=(+of.price||0)-(+of.buyerLess||0);
+  const offerLine=(+of.buyerLess||0)===0?'*Full Refund* filling the refund form!':'*Rs.'+refund+' Refund* (sirf Rs.'+of.buyerLess+' lagega) filling the refund form!';
+  let m='\ud83d\udecd\ufe0f *NEW HOT DEAL ALERT!*\n\n';
+  if(of.link) m+='\ud83d\udd17 Product Link:\n'+of.link+'\n\n';
+  m+='\ud83d\udd22 Deal Code: *'+code+'*\n\n';
+  if(of.dealType) m+='\ud83c\udff7\ufe0f Deal Type: [ *'+of.dealType+' Deal* ]\n\n';
+  m+='\ud83d\udcb0 Price: Rs.'+of.price+'\n\ud83d\udcb8 Offer: '+offerLine+'\n\n';
+  m+='\u23f0 Refund Time: Review live hone ke baad 24-48 hours mein.\n\n';
+  m+='\u26a0\ufe0f Condition: Agar 30 minutes mein order kar sakte hain toh hi order karein.\n\n';
+  if(left!=='') m+='\ud83c\udfb0 Availability: Only *'+left+' slots* left!\n\n';
+  m+='\ud83e\udd16 Order Form (DDL Agent):\n'+baseUrl()+'?v=buyer&deal='+of.id+'\n\n';
+  m+='\ud83d\udc49 Deal Code daal kar 2 minute mein order register karein!';
+  return m;
+}
+function shareOffer(offerId, from){
+  const offers=from==='med'?window._offers:(window._D&&window._D.deals||[]);
+  const orders=from==='med'?(window._medOrders||[]):(window._D&&window._D.orders||[]);
+  const of=offers.find(x=>x.id===offerId); if(!of)return;
+  const msg=buildShareMsg(of, orders);
+  try{ navigator.clipboard.writeText(msg); }catch(e){}
+  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
 }
 
 // ══════════ ADMIN ══════════
@@ -582,7 +611,11 @@ function adminDeals(){
         <div class="field"><label>Price (₹)</label><input id="md-price" type="number" placeholder="500"></div>
         <div class="field"><label>Total Qty</label><input id="md-qty" type="number" placeholder="20"></div>
       </div>
-      <div class="field"><label>Product Image</label><input type="file" id="md-img" accept="image/*"></div>
+      <div class="field"><label>Product Link (Meesho/Amazon URL)</label><input id="md-link" placeholder="https://..."></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="field"><label>Deal Type</label><select id="md-dtype"><option>Empty</option><option>Original</option><option>Exchange</option><option>Premium</option></select></div>
+        <div class="field"><label>Product Image</label><input type="file" id="md-img" accept="image/*"></div>
+      </div>
       <button class="btn btn-grad" onclick="createMaster()">💾 Create Deal</button>
     </div>
     ${masters.map(m=>{
@@ -593,6 +626,7 @@ function adminDeals(){
           <div style="font-weight:800;font-family:Sora;">${esc(m.productName)} <span class="badge b-blue">${esc(m.productCode)}</span></div>
           <div><span class="badge b-gray">₹${esc(m.price)}</span> <span class="badge b-blue">Total Qty ${esc(m.qty||'∞')}</span> <span class="badge b-yellow">Assigned ${mOffers.reduce((s2,o2)=>s2+(+o2.qty||0),0)}</span> <span class="badge b-green">${mOrders.length} orders</span></div>
         </div>
+        ${m.image?`<img src="${m.image}" style="max-width:110px;border-radius:10px;margin-bottom:10px;border:1px solid var(--border);">`:''}
         <div style="background:#F8F7FE;border-radius:12px;padding:12px;margin-bottom:10px;">
           <div class="muted" style="margin-bottom:8px;font-weight:800;">ASSIGN / SHARE:</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -611,7 +645,7 @@ function adminDeals(){
           return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
             <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
               <div><strong>${esc(of.mediatorCode)}</strong> · Admin Less <span class="badge b-yellow">₹${esc(of.adminLess)}</span> · Buyer Less ${of.buyerLess!=null?'<span class="badge b-pink">₹'+esc(of.buyerLess)+'</span>':'<span class="badge b-gray">not set</span>'} ${of.buyerLess!=null?'· Cut <span class="badge b-green">₹'+(of.buyerLess-of.adminLess)+'</span>':''}</div>
-              <div><span class="badge ${ofOrders.length>=(+of.qty||9e9)?'b-red':'b-gray'}">${ofOrders.length}/${esc(of.qty||'∞')} slots</span> <button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
+              <div><span class="badge ${ofOrders.length>=(+of.qty||9e9)?'b-red':'b-gray'}">${ofOrders.length}/${esc(of.qty||'∞')} slots</span> ${of.buyerLess!=null?`<button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','admin')">📲 Share</button> `:''}<button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
             </div>
             ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>`:''}
           </div>`;
@@ -628,7 +662,9 @@ async function createMaster(){
   let image='';
   const f=document.getElementById('md-img').files[0];
   if(f) image=await compressImg(f);
-  await dbIns('ddl_deals',{id:'deal_'+Date.now(),type:'master',productCode:pc,productName:pn,price,qty,image,createdAt:today()});
+  const link=document.getElementById('md-link').value.trim();
+  const dealType=document.getElementById('md-dtype').value;
+  await dbIns('ddl_deals',{id:'deal_'+Date.now(),type:'master',productCode:pc,productName:pn,price,qty,image,link,dealType,createdAt:today()});
   adminMain('deals');
 }
 async function assignOffer(dealId){
@@ -642,7 +678,7 @@ async function assignOffer(dealId){
   const assigned=deals.filter(d=>d.type==='offer'&&d.dealId===dealId).reduce((s2,o2)=>s2+(+o2.qty||0),0);
   if(m.qty&&(assigned+qty)>+m.qty){alert('❌ Itne slots nahi bache!\nTotal: '+m.qty+' | Assigned: '+assigned+' | Bache: '+(+m.qty-assigned));return;}
   const isOwn=medCode===ADMIN_CODE;
-  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',qty,
+  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',link:m.link||'',dealType:m.dealType||'',qty,
     mediatorCode:medCode,adminLess,buyerLess:isOwn?adminLess:null,active:isOwn,createdAt:today()};
   await dbIns('ddl_deals',of);
   if(isOwn) alert('✅ Apne group ki deal ready! Link deals list mein hai — buyers ko share karo.');
