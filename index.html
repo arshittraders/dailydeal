@@ -210,22 +210,31 @@ function renderBuyer(){
 }
 function mainMenu(prefix){
   CS.step='code';
-  botSay((prefix?prefix+'\n\n':'')+'Product Code ya Deal Code daaliye:\n• Sirf code (e.g. 1001) → DDL ki deal\n• MEDIATOR-CODE (e.g. ANKITA-1001) → mediator ki deal\n\nYa neeche se option choose karein:');
+  botSay((prefix?prefix+'\n\n':'')+'Apna Deal Code daaliye 👇\n(jo aapko deal ke saath mila hai)\n\nYa neeche se option choose karein:');
   showOpts(['💸 Refund Form','🔍 Order Status','✉️ Change Gmail']);
 }
 async function loadLinkedOffer(){
   const deals=await dbAll('ddl_deals');
   const of=deals.find(d=>d.id===CS.offerFromLink&&d.type==='offer'&&d.active&&d.buyerLess!=null);
-  if(!of){ botSay('❌ Yeh deal link active nahi hai. Mediator se naya link maangein.'); mainMenu(''); return; }
-  showDeal(of);
+  if(!of){ botSay('❌ Yeh deal link active nahi hai. Jisne link diya hai unse naya link maangein.'); mainMenu(''); return; }
+  const slotsLeft=await offerSlotsLeft(of);
+  if(slotsLeft<=0){ botSay('😔 Sorry! Yeh deal FULL ho gayi hai — saare slots book ho chuke hain.'); mainMenu(''); return; }
+  showDeal(of,slotsLeft);
 }
-function showDeal(of){
+async function offerSlotsLeft(of){
+  if(!of.qty) return 999999;
+  const orders=await dbAll('ddl_orders');
+  const used=orders.filter(o=>o.offerId===of.id).length;
+  return (+of.qty)-used;
+}
+function showDeal(of,slotsLeft){
   CS.offer=of; CS.step='confirm';
   const refund=(+of.price||0)-(+of.buyerLess||0);
   let html='<div style="font-weight:800;margin-bottom:6px;">🎁 Deal Details</div>';
   if(of.image) html+='<img src="'+of.image+'" style="max-width:200px;border-radius:10px;margin-bottom:8px;">';
-  html+='📦 <b>'+esc(of.productName)+'</b> ('+esc(of.productCode)+')\n💰 Price: ₹'+esc(of.price)+'\n🔻 Less: ₹'+esc(of.buyerLess)+'\n✅ <b>Refund milega: ₹'+refund+'</b>\n🤝 By: '+esc(of.mediatorCode);
-  botSay(html.replace(/\\n/g,'<br>'),true);
+  html+='📦 <b>'+esc(of.productName)+'</b><br>💰 Price: ₹'+esc(of.price)+'<br>🔻 Less: ₹'+esc(of.buyerLess)+'<br>✅ <b>Refund milega: ₹'+refund+'</b>';
+  if(of.qty&&slotsLeft!=null&&slotsLeft<999999) html+='<br>🎟️ Slots baaki: <b>'+slotsLeft+'</b>';
+  botSay(html,true);
   showOpts(['🛒 Order Karna Hai','🔙 Back']);
 }
 function botSay(t,html){ const d=document.createElement('div'); d.className='msg bot'; if(html)d.innerHTML=t; else d.textContent=t; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
@@ -278,8 +287,10 @@ async function handleChat(input){
     } else {
       of=offers.find(d=>d.mediatorCode===ADMIN_CODE&&String(d.productCode).toUpperCase()===raw);
     }
-    if(!of){ botSay('❌ Is code par koi active deal nahi mili.\n\n• DDL deal: sirf product code (e.g. 1001)\n• Mediator deal: MEDIATOR-CODE (e.g. ANKITA-1001)\n\nDobara try karein:'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
-    showDeal(of); return;
+    if(!of){ botSay('❌ Is code par koi active deal nahi mili. Deal Code dobara check karke daaliye:'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
+    const slotsLeft=await offerSlotsLeft(of);
+    if(slotsLeft<=0){ botSay('😔 Sorry! Yeh deal FULL ho gayi hai — saare slots book ho chuke hain.'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
+    showDeal(of,slotsLeft); return;
   }
   // DEAL CONFIRM
   if(s.step==='confirm'){
@@ -304,6 +315,8 @@ async function handleChat(input){
   if(s.step==='o_shot'){
     s.order.screenshot=input;
     botSay('⏳ Order register ho raha hai...');
+    const ofNow=(await dbAll('ddl_deals')).find(d=>d.id===s.order.offerId);
+    if(ofNow){ const left=await offerSlotsLeft(ofNow); if(left<=0){ botSay('😔 Sorry! Aapke submit karte-karte deal FULL ho gayi. Order register nahi hua.'); mainMenu(''); return; } }
     let o={ id:'ord_'+Date.now(), ...s.order, status:'Ordered', orderDate:today(), refund:{}, history:[{s:'Ordered',d:today()}] };
     o=await dbIns('ddl_orders',o)||o;
     botSay('🎉 Order successfully registered!\n\nYeh raha aapka current status: 👇');
@@ -462,7 +475,7 @@ async function medDash(){
         return `<div class="deal-card">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
             <div><strong>${esc(of.productName)}</strong> <span class="badge b-blue">${esc(of.productCode)}</span></div>
-            <div><span class="badge b-gray">Price ₹${esc(of.price)}</span> <span class="badge b-yellow">Admin Less ₹${esc(of.adminLess)}</span></div>
+            <div><span class="badge b-gray">Price ₹${esc(of.price)}</span> <span class="badge b-yellow">Admin Less ₹${esc(of.adminLess)}</span> <span class="badge b-blue">Qty ${esc(of.qty||'∞')}</span></div>
           </div>
           ${of.buyerLess==null? `
             <div style="display:flex;gap:8px;align-items:center;">
@@ -473,7 +486,7 @@ async function medDash(){
             <div style="margin-bottom:8px;">
               <span class="badge b-pink">Buyer Less ₹${esc(of.buyerLess)}</span>
               <span class="badge b-green">Mera Cut ₹${cut}/order</span>
-              <span class="badge b-gray">${dOrders.length} orders</span>
+              <span class="badge ${dOrders.length>=(+of.qty||9e9)?'b-red':'b-blue'}">${dOrders.length}/${esc(of.qty||'∞')} slots</span>
             </div>
             <div class="muted">Deal Code: <strong>${esc(of.mediatorCode)}-${esc(of.productCode)}</strong> · Link (tap=copy):</div>
             <div class="copybox" onclick="copyTxt(this)">${b}?v=buyer&deal=${of.id}</div>`}
@@ -578,7 +591,7 @@ function adminDeals(){
       return `<div class="card">
         <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
           <div style="font-weight:800;font-family:Sora;">${esc(m.productName)} <span class="badge b-blue">${esc(m.productCode)}</span></div>
-          <div><span class="badge b-gray">₹${esc(m.price)}</span> <span class="badge b-gray">Qty ${esc(m.qty||'-')}</span> <span class="badge b-green">${mOrders.length} orders</span></div>
+          <div><span class="badge b-gray">₹${esc(m.price)}</span> <span class="badge b-blue">Total Qty ${esc(m.qty||'∞')}</span> <span class="badge b-yellow">Assigned ${mOffers.reduce((s2,o2)=>s2+(+o2.qty||0),0)}</span> <span class="badge b-green">${mOrders.length} orders</span></div>
         </div>
         <div style="background:#F8F7FE;border-radius:12px;padding:12px;margin-bottom:10px;">
           <div class="muted" style="margin-bottom:8px;font-weight:800;">ASSIGN / SHARE:</div>
@@ -587,7 +600,8 @@ function adminDeals(){
               <option value="${ADMIN_CODE}">🏠 Apna Group (${ADMIN_CODE})</option>
               ${meds.map(md=>`<option value="${esc(md.code)}">${esc(md.name)} (${esc(md.code)})</option>`).join('')}
             </select>
-            <input id="as-less-${m.id}" type="number" placeholder="Admin Less ₹" style="width:130px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
+            <input id="as-less-${m.id}" type="number" placeholder="Admin Less ₹" style="width:120px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
+            <input id="as-qty-${m.id}" type="number" placeholder="Qty" style="width:80px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
             <button class="btn btn-sm btn-grad" style="width:auto;" onclick="assignOffer('${m.id}')">🎯 Assign</button>
           </div>
           <div class="muted" style="margin-top:6px;">Apne group ke liye: Admin Less = Buyer Less (direct). Mediator ke liye: full refund dena ho toh 0 daalo.</div>
@@ -597,7 +611,7 @@ function adminDeals(){
           return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
             <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
               <div><strong>${esc(of.mediatorCode)}</strong> · Admin Less <span class="badge b-yellow">₹${esc(of.adminLess)}</span> · Buyer Less ${of.buyerLess!=null?'<span class="badge b-pink">₹'+esc(of.buyerLess)+'</span>':'<span class="badge b-gray">not set</span>'} ${of.buyerLess!=null?'· Cut <span class="badge b-green">₹'+(of.buyerLess-of.adminLess)+'</span>':''}</div>
-              <div><span class="badge b-gray">${ofOrders.length} orders</span> <button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
+              <div><span class="badge ${ofOrders.length>=(+of.qty||9e9)?'b-red':'b-gray'}">${ofOrders.length}/${esc(of.qty||'∞')} slots</span> <button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
             </div>
             ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>`:''}
           </div>`;
@@ -622,9 +636,13 @@ async function assignOffer(dealId){
   const m=deals.find(d=>d.id===dealId);
   const medCode=document.getElementById('as-med-'+dealId).value;
   const adminLess=+document.getElementById('as-less-'+dealId).value;
+  const qty=+document.getElementById('as-qty-'+dealId).value;
   if(isNaN(adminLess)){alert('Admin Less daalo (0 bhi chal sakta hai full refund ke liye)!');return;}
+  if(!qty||qty<1){alert('Qty daalo — kitne slots dene hain!');return;}
+  const assigned=deals.filter(d=>d.type==='offer'&&d.dealId===dealId).reduce((s2,o2)=>s2+(+o2.qty||0),0);
+  if(m.qty&&(assigned+qty)>+m.qty){alert('❌ Itne slots nahi bache!\nTotal: '+m.qty+' | Assigned: '+assigned+' | Bache: '+(+m.qty-assigned));return;}
   const isOwn=medCode===ADMIN_CODE;
-  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',
+  const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',qty,
     mediatorCode:medCode,adminLess,buyerLess:isOwn?adminLess:null,active:isOwn,createdAt:today()};
   await dbIns('ddl_deals',of);
   if(isOwn) alert('✅ Apne group ki deal ready! Link deals list mein hai — buyers ko share karo.');
