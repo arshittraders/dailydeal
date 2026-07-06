@@ -137,8 +137,8 @@ async function gsPost(payload){
   if(!j.ok){ alert('❌ '+(j.error||'Save failed')); throw new Error(j.error); }
   return j;
 }
-async function dbIns(t,o){ await gsPost({action:'insert', table:TSHEET[t], id:o.id, obj:o}); if(_cache) (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(o); }
-async function dbUpd(t,o){ await gsPost({action:'update', table:TSHEET[t], id:o.id, obj:o}); if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=o; } }
+async function dbIns(t,o){ const r=await gsPost({action:'insert', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache) (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); return saved; }
+async function dbUpd(t,o){ const r=await gsPost({action:'update', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; } return saved; }
 async function dbDel(t,id){ await gsPost({action:'delete', table:TSHEET[t], id}); if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); } }
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
