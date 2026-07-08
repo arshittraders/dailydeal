@@ -105,6 +105,17 @@ tbody tr:last-child td{border-bottom:none;}
 .tabbtns{display:flex;gap:6px;background:#EEEBFA;border-radius:14px;padding:5px;margin-bottom:18px;flex-wrap:wrap;}
 .tabbtns button{flex:1;padding:9px 8px;border:none;background:transparent;border-radius:10px;font-size:12.5px;font-weight:700;color:var(--text-2);cursor:pointer;min-width:90px;}
 .tabbtns button.on{background:#fff;color:var(--primary);box-shadow:0 2px 8px rgba(79,70,229,.14);}
+.slot-grid-wrap{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+.slot-btn{width:36px;height:36px;border-radius:9px;border:none;font-weight:800;font-family:Manrope;cursor:pointer;color:#fff;font-size:12px;box-shadow:var(--shadow-sm);}
+.slot-btn:disabled{cursor:not-allowed;opacity:.9;}
+.slot-red{background:var(--danger);}
+.slot-yellow{background:var(--warn);animation:slotpulse 1.2s infinite;}
+.slot-green{background:var(--accent);}
+@keyframes slotpulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+.slot-dot{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9px;font-weight:800;font-size:11px;color:#fff;cursor:pointer;margin:3px;border:none;box-shadow:var(--shadow-sm);}
+.slot-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--text-3);margin:6px 0 10px;align-items:center;}
+.slot-legend span{display:inline-flex;align-items:center;gap:4px;}
+.slot-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
 </style>
 </head>
 <body>
@@ -257,25 +268,100 @@ async function loadLinkedOffer(){
   const deals=await dbAll('ddl_deals');
   const of=deals.find(d=>d.id===CS.offerFromLink&&d.type==='offer'&&d.active&&d.buyerLess!=null);
   if(!of){ botSay('❌ Yeh deal link active nahi hai. Jisne link diya hai unse naya link maangein.'); mainMenu(''); return; }
-  const slotsLeft=await offerSlotsLeft(of);
+  const slotsLeft=offerSlotsLeft(of);
   if(slotsLeft<=0){ botSay('😔 Sorry! Yeh deal FULL ho gayi hai — saare slots book ho chuke hain.'); mainMenu(''); return; }
-  showDeal(of,slotsLeft);
+  showDeal(of);
 }
-async function offerSlotsLeft(of){
+function getSlots(of){
+  if(of.slots&&of.slots.length) return of.slots;
+  return Array.from({length:+of.qty||0},(_,i)=>({n:i+1,status:'open'}));
+}
+function offerSlotsLeft(of){
   if(!of.qty) return 999999;
-  const orders=await dbAll('ddl_orders');
-  const used=orders.filter(o=>o.offerId===of.id).length;
-  return (+of.qty)-used;
+  return getSlots(of).filter(s=>s.status==='open').length;
 }
-function showDeal(of,slotsLeft){
-  CS.offer=of; CS.step='confirm';
+function showDeal(of){
+  CS.offer=of; CS.step='slotpick';
   const refund=(+of.price||0)-(+of.buyerLess||0);
   let html='<div style="font-weight:800;margin-bottom:6px;">🎁 Deal Details</div>';
   if(of.image) html+='<img src="'+of.image+'" style="max-width:200px;border-radius:10px;margin-bottom:8px;">';
   html+='📦 <b>'+esc(of.productName)+'</b>'+(of.dealType?' <span class="badge b-blue">'+esc(of.dealType)+' Deal</span>':'')+'<br>💰 Price: ₹'+esc(of.price)+'<br>🔻 Less: ₹'+esc(of.buyerLess)+'<br>✅ <b>Refund milega: ₹'+refund+'</b>'+(of.link?'<br>🔗 <a href="'+esc(of.link)+'" target="_blank" style="color:var(--primary);font-weight:800;">Product Link kholein</a>':'');
-  if(of.qty&&slotsLeft!=null&&slotsLeft<999999) html+='<br>🎟️ Slots baaki: <b>'+slotsLeft+'</b>';
   botSay(html,true);
-  showOpts(['🛒 Order Karna Hai','🔙 Back']);
+  botSay('👇 Apna slot number choose karein (🔴 = available, 🟡 = kisi ne grab kiya hai, 🟢 = confirm ho chuka):');
+  showSlotGrid(of);
+  showOpts(['🔙 Back']);
+}
+function showSlotGrid(of){
+  const slots=getSlots(of);
+  const w=document.createElement('div'); w.className='chat-opts slot-grid-wrap';
+  slots.forEach(s=>{
+    const b=document.createElement('button');
+    b.className='slot-btn '+(s.status==='confirmed'?'slot-green':s.status==='pending'?'slot-yellow':'slot-red');
+    b.textContent=s.n;
+    b.disabled=s.status!=='open';
+    if(s.status==='open'){
+      b.onclick=()=>{
+        w.remove(); userSay('Slot #'+s.n+' select kiya');
+        CS.order.offerId=of.id; CS.order.dealId=of.dealId; CS.order.productCode=of.productCode;
+        CS.order.mediatorCode=of.mediatorCode; CS.order.adminLess=+of.adminLess||0; CS.order.buyerLess=+of.buyerLess||0;
+        CS.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); CS.order.price=+of.price||0;
+        CS.grabSlot=s.n; CS.step='grab_name';
+        botSay('✋ Slot #'+s.n+' choose kiya! Apna Full Name batayiye:');
+      };
+    }
+    w.appendChild(b);
+  });
+  msgs.appendChild(w); msgs.scrollTop=msgs.scrollHeight;
+}
+async function grabSlot(offerId,n,name,gmail){
+  const deals=await dbAll('ddl_deals',true);
+  const of=deals.find(d=>d.id===offerId);
+  if(!of) return {ok:false,msg:'Deal nahi mili.'};
+  const slots=getSlots(of);
+  const slot=slots.find(x=>x.n===n);
+  if(!slot||slot.status!=='open') return {ok:false,msg:'Yeh slot already le liya gaya hai. Dusra choose karein.'};
+  slot.status='pending'; slot.name=name; slot.gmail=gmail; slot.claimedAt=new Date().toISOString();
+  of.slots=slots;
+  await dbUpd('ddl_deals',of);
+  return {ok:true};
+}
+function watchMySlot(offerId,n){
+  try{
+    CS.slotChannel=supa.channel('my-slot-'+offerId+'-'+n+'-'+Date.now())
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'ddl_deals',filter:'id=eq.'+offerId},payload=>{
+        const slots=(payload.new&&payload.new.data&&payload.new.data.slots)||[];
+        const slot=slots.find(x=>x.n===n);
+        if(!slot||CS.grabSlot!==n) return;
+        if(slot.status==='confirmed') onSlotConfirmed();
+        else if(slot.status==='open') onSlotRejected();
+      }).subscribe();
+  }catch(e){}
+  CS.slotPoll=setInterval(async()=>{
+    const deals=await dbAll('ddl_deals',true);
+    const of=deals.find(d=>d.id===offerId);
+    const slot=of&&getSlots(of).find(x=>x.n===n);
+    if(!slot||CS.grabSlot!==n) return;
+    if(slot.status==='confirmed') onSlotConfirmed();
+    else if(slot.status==='open') onSlotRejected();
+  },6000);
+}
+function stopSlotWatch(){
+  if(CS.slotChannel){ try{supa.removeChannel(CS.slotChannel);}catch(e){} CS.slotChannel=null; }
+  if(CS.slotPoll){ clearInterval(CS.slotPoll); CS.slotPoll=null; }
+}
+function onSlotConfirmed(){
+  stopSlotWatch();
+  botSay('✅ Aapki slot request APPROVE ho gayi hai! 🎉');
+  CS.step='o_orderid';
+  botSay('Ab order complete karein — Apna Order ID batayiye:');
+}
+function onSlotRejected(){
+  stopSlotWatch();
+  botSay('❌ Aapki request reject ho gayi ya slot release ho gaya.\n\nDobara koi aur slot choose karein:');
+  dbAll('ddl_deals',true).then(deals=>{
+    const of=deals.find(d=>d.id===CS.offer.id);
+    if(of) showDeal(of); else mainMenu('');
+  });
 }
 function botSay(t,html){ const d=document.createElement('div'); d.className='msg bot'; if(html)d.innerHTML=t; else d.textContent=t; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
 function userSay(t){ const d=document.createElement('div'); d.className='msg user'; d.textContent=t; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
@@ -302,7 +388,7 @@ function statusView(o){
 async function handleChat(input){
   const s=CS;
   // Global options available from code step
-  if(s.step==='code'||s.step==='confirm'){
+  if(s.step==='code'||s.step==='slotpick'){
     if(input.includes('Refund Form')){ s.step='r_find'; botSay('Apna Order ID batayiye:'); return; }
     if(input.includes('Order Status')){ s.step='s_find'; botSay('Apna Order ID batayiye: 🔍'); return; }
     if(input.includes('Change Gmail')){ s.step='g'; botSay('Naya Gmail address batayiye:'); return; }
@@ -328,23 +414,33 @@ async function handleChat(input){
       of=offers.find(d=>d.mediatorCode===ADMIN_CODE&&String(d.productCode).toUpperCase()===raw);
     }
     if(!of){ botSay('❌ Is code par koi active deal nahi mili. Deal Code dobara check karke daaliye:'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
-    const slotsLeft=await offerSlotsLeft(of);
+    const slotsLeft=offerSlotsLeft(of);
     if(slotsLeft<=0){ botSay('😔 Sorry! Yeh deal FULL ho gayi hai — saare slots book ho chuke hain.'); showOpts(['💸 Refund Form','🔍 Order Status']); return; }
-    showDeal(of,slotsLeft); return;
+    showDeal(of); return;
   }
-  // DEAL CONFIRM
-  if(s.step==='confirm'){
+  // SLOT PICK screen options
+  if(s.step==='slotpick'){
     if(input.includes('Back')){ mainMenu(''); return; }
-    if(input.includes('Order Karna Hai')){
-      const of=s.offer;
-      s.order.offerId=of.id; s.order.dealId=of.dealId; s.order.productCode=of.productCode;
-      s.order.mediatorCode=of.mediatorCode; s.order.adminLess=+of.adminLess||0; s.order.buyerLess=+of.buyerLess||0;
-      s.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); s.order.price=+of.price||0;
-      s.step='o_name'; botSay('Apna Full Name batayiye:'); return;
-    }
   }
-  // ORDER FLOW
-  if(s.step==='o_name'){ s.order.name=input; s.step='o_orderid'; botSay('Apna Order ID batayiye:'); return; }
+  // GRAB — name entry after picking a slot
+  if(s.step==='grab_name'){
+    const name=input.trim();
+    if(!name){ botSay('Naam daaliye:'); return; }
+    botSay('⏳ Request bheji ja rahi hai...');
+    const res=await grabSlot(s.offer.id, s.grabSlot, name, s.order.gmail);
+    if(!res.ok){
+      botSay('😔 '+res.msg);
+      const deals=await dbAll('ddl_deals',true);
+      const of=deals.find(d=>d.id===s.offer.id);
+      if(of) showDeal(of); else mainMenu('');
+      return;
+    }
+    s.order.name=name;
+    botSay('✅ Request bhej di! Admin/Mediator approve karega — thoda wait karein... ⏳\n\n(Yeh chat khuli rakhein, approve hote hi yahin update aa jayega)');
+    watchMySlot(s.offer.id, s.grabSlot);
+    return;
+  }
+  // ORDER FLOW (starts after slot approved)
   if(s.step==='o_orderid'){
     const all=await dbAll('ddl_orders');
     if(all.find(o=>o.orderId===input)){ botSay('⚠️ Yeh Order ID already registered hai!'); mainMenu(''); return; }
@@ -355,8 +451,6 @@ async function handleChat(input){
   if(s.step==='o_shot'){
     s.order.screenshot=input;
     botSay('⏳ Order register ho raha hai...');
-    const ofNow=(await dbAll('ddl_deals')).find(d=>d.id===s.order.offerId);
-    if(ofNow){ const left=await offerSlotsLeft(ofNow); if(left<=0){ botSay('😔 Sorry! Aapke submit karte-karte deal FULL ho gayi. Order register nahi hua.'); mainMenu(''); return; } }
     let o={ id:'ord_'+Date.now(), ...s.order, status:'Ordered', orderDate:today(), refund:{}, history:[{s:'Ordered',d:today()}] };
     o=await dbIns('ddl_orders',o)||o;
     botSay('🎉 Order successfully registered!\n\nYeh raha aapka current status: 👇');
@@ -488,6 +582,7 @@ async function medLogin(){
   MED=m;
   document.getElementById('med-auth').classList.add('hidden');
   medDash();
+  startSlotWatch();
 }
 async function medDash(force){
   const dash=document.getElementById('med-dash');
@@ -510,7 +605,8 @@ async function medDash(force){
       <div style="font-weight:800;font-family:Sora;margin-bottom:4px;">🎯 My Assigned Deals</div>
       <div class="muted" style="margin-bottom:14px;">Admin ne jo deals di hain. Apna "Buyer Less" set karo — jitna zyada rakhoge, utna tumhara cut. (Buyer Less ≥ Admin Less zaroori hai)</div>
       ${myOffers.length? myOffers.map(of=>{
-        const dOrders=orders.filter(o=>o.offerId===of.id);
+        const slots=getSlots(of);
+        const openC=slots.filter(s=>s.status==='open').length, pendC=slots.filter(s=>s.status==='pending').length, confC=slots.filter(s=>s.status==='confirmed').length;
         const cut=of.buyerLess!=null?(+of.buyerLess-+of.adminLess):null;
         return `<div class="deal-card">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
@@ -526,11 +622,12 @@ async function medDash(force){
             <div style="margin-bottom:8px;">
               <span class="badge b-pink">Buyer Less ₹${esc(of.buyerLess)}</span>
               <span class="badge b-green">Mera Cut ₹${cut}/order</span>
-              <span class="badge ${dOrders.length>=(+of.qty||9e9)?'b-red':'b-blue'}">${dOrders.length}/${esc(of.qty||'∞')} slots</span>
+              <span class="badge b-red">🔴${openC}</span> ${pendC?'<span class="badge b-yellow">🟡'+pendC+'</span> ':''}<span class="badge b-green">🟢${confC}</span>
             </div>
             <div class="muted">Deal Code: <strong>${esc(of.mediatorCode)}-${esc(of.productCode)}</strong> · Link (tap=copy):</div>
             <div class="copybox" onclick="copyTxt(this)">${b}?v=buyer&deal=${of.id}</div>
-            <button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','med')">📲 WhatsApp Share Message</button>`}
+            <button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','med')">📲 WhatsApp Share Message</button>
+            ${renderSlotGrid(of)}`}
         </div>`;
       }).join(''):'<div class="muted">Abhi koi deal assign nahi hui. Admin se contact karo.</div>'}
     </div>
@@ -553,6 +650,63 @@ async function setBuyerLess(offerId){
   await dbUpd('ddl_deals',of);
   alert('✅ Deal activate! Tumhara cut: ₹'+(val-of.adminLess)+'/order');
   medDash();
+}
+
+// ══════════ SLOT GRID (admin + mediator shared) ══════════
+function renderSlotGrid(of){
+  const slots=getSlots(of);
+  const legend='<div class="slot-legend"><span><i style="background:var(--danger);"></i>Open</span><span><i style="background:var(--warn);"></i>Pending — tap to approve/reject</span><span><i style="background:var(--accent);"></i>Confirmed — tap to release</span></div>';
+  const dots=slots.map(s=>{
+    const cls=s.status==='confirmed'?'slot-green':s.status==='pending'?'slot-yellow':'slot-red';
+    const title=s.status==='open'?'Slot #'+s.n+' — Open':'Slot #'+s.n+' — '+esc(s.name||'')+' ('+s.status+')';
+    return `<button class="slot-dot ${cls}" title="${title}" onclick="slotAction('${of.id}',${s.n})" ${s.status==='open'?'disabled':''}>${s.n}</button>`;
+  }).join('');
+  return legend+'<div class="slot-grid-wrap">'+dots+'</div>';
+}
+async function slotAction(offerId,n){
+  const deals=await dbAll('ddl_deals',true);
+  const of=deals.find(d=>d.id===offerId); if(!of) return;
+  const slots=getSlots(of);
+  const slot=slots.find(x=>x.n===n); if(!slot) return;
+  if(slot.status==='open') return;
+  if(slot.status==='confirmed'){
+    if(!confirm('Slot #'+n+' — '+(slot.name||'')+'\n\n✅ Confirmed hai. Release karke wapas OPEN karna hai?')) return;
+    slot.status='open'; slot.name=null; slot.gmail=null; slot.claimedAt=null; slot.confirmedAt=null;
+  } else {
+    const approve=confirm('Slot #'+n+' Request:\n👤 '+(slot.name||'')+'\n\nOK = ✅ Approve\nCancel = ❌ Reject');
+    if(approve){ slot.status='confirmed'; slot.confirmedAt=today(); }
+    else { slot.status='open'; slot.name=null; slot.gmail=null; slot.claimedAt=null; }
+  }
+  of.slots=slots;
+  await dbUpd('ddl_deals',of);
+  refreshCurrentView();
+}
+function refreshCurrentView(){
+  if(view==='admin'&&window._D) adminMain(window._curAdminTab||'deals',true);
+  else if(view==='mediator'&&MED) medDash(true);
+}
+let _slotWatchChannel=null;
+function startSlotWatch(){
+  if(_slotWatchChannel) return;
+  try{
+    _slotWatchChannel=supa.channel('ddl-slot-watch-'+Date.now())
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'ddl_deals'},async payload=>{
+        try{
+          const newData=payload.new&&payload.new.data; if(!newData) return;
+          const prevOf=((_cache&&_cache.deals)||[]).find(d=>d.id===payload.new.id);
+          const prevSlots=(prevOf&&prevOf.slots)||[];
+          const newSlots=newData.slots||[];
+          const newlyPending=newSlots.filter(ns=>ns.status==='pending'&&!prevSlots.some(ps=>ps.n===ns.n&&ps.status==='pending'));
+          const relevant=view==='admin'||(view==='mediator'&&MED&&newData.mediatorCode===MED.code);
+          await loadStore(true);
+          if(newlyPending.length&&relevant){
+            playAlarm(4);
+            notify('🔔 SLOT REQUEST!', (newlyPending[0].name||'Buyer')+' ne Slot #'+newlyPending[0].n+' grab kiya — approve karo!');
+          }
+          refreshCurrentView();
+        }catch(e){}
+      }).subscribe();
+  }catch(e){}
 }
 
 // ══════════ WHATSAPP SHARE ══════════
@@ -588,8 +742,10 @@ function renderAdmin(){
   const p=prompt('Admin password:');
   if(p!==ADMIN_PASS){ V.innerHTML='<div class="wrap"><div class="alert a-err">❌ Wrong password</div></div>'; return; }
   adminMain('orders');
+  startSlotWatch();
 }
 async function adminMain(tab,force){
+  window._curAdminTab=tab;
   if(!window._D || force){ V.innerHTML='<div class="wrap wide"><div class="alert a-info">⏳ Loading...</div></div>'; }
   const [deals,orders,meds]=await Promise.all([dbAll('ddl_deals',force),dbAll('ddl_orders',force),dbAll('ddl_mediators',force)]);
   window._D={deals,orders,meds};
@@ -683,13 +839,14 @@ function adminDeals(){
           <div class="muted" style="margin-top:6px;">Apne group ke liye: Admin Less = Buyer Less (direct). Mediator ke liye: full refund dena ho toh 0 daalo.</div>
         </div>
         ${mOffers.map(of=>{
-          const ofOrders=orders.filter(o=>o.offerId===of.id);
+          const slots=getSlots(of);
+          const openC=slots.filter(s=>s.status==='open').length, pendC=slots.filter(s=>s.status==='pending').length, confC=slots.filter(s=>s.status==='confirmed').length;
           return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
             <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
               <div><strong>${esc(of.mediatorCode)}</strong> · Admin Less <span class="badge b-yellow">₹${esc(of.adminLess)}</span> · Buyer Less ${of.buyerLess!=null?'<span class="badge b-pink">₹'+esc(of.buyerLess)+'</span>':'<span class="badge b-gray">not set</span>'} ${of.buyerLess!=null?'· Cut <span class="badge b-green">₹'+(of.buyerLess-of.adminLess)+'</span>':''}</div>
-              <div><span class="badge ${ofOrders.length>=(+of.qty||9e9)?'b-red':'b-gray'}">${ofOrders.length}/${esc(of.qty||'∞')} slots</span> ${of.buyerLess!=null?`<button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','admin')">📲 Share</button> `:''}<button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
+              <div><span class="badge b-red">🔴${openC}</span> ${pendC?'<span class="badge b-yellow">🟡'+pendC+'</span> ':''}<span class="badge b-green">🟢${confC}</span> ${of.buyerLess!=null?`<button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','admin')">📲 Share</button> `:''}<button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
             </div>
-            ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>`:''}
+            ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>${renderSlotGrid(of)}`:''}
           </div>`;
         }).join('')||'<div class="muted">Abhi kisi ko assign nahi kiya.</div>'}
       </div>`;
@@ -721,7 +878,8 @@ async function assignOffer(dealId){
   if(m.qty&&(assigned+qty)>+m.qty){alert('❌ Itne slots nahi bache!\nTotal: '+m.qty+' | Assigned: '+assigned+' | Bache: '+(+m.qty-assigned));return;}
   const isOwn=medCode===ADMIN_CODE;
   const of={id:'offer_'+Date.now(),type:'offer',dealId,productCode:m.productCode,productName:m.productName,price:m.price,image:m.image||'',link:m.link||'',dealType:m.dealType||'',qty,
-    mediatorCode:medCode,adminLess,buyerLess:isOwn?adminLess:null,active:isOwn,createdAt:today()};
+    mediatorCode:medCode,adminLess,buyerLess:isOwn?adminLess:null,active:isOwn,createdAt:today(),
+    slots:Array.from({length:qty},(_,i)=>({n:i+1,status:'open'}))};
   await dbIns('ddl_deals',of);
   if(isOwn) alert('✅ Apne group ki deal ready! Link deals list mein hai — buyers ko share karo.');
   else alert('✅ '+medCode+' ko assign ho gayi! Ab woh login karke apna Buyer Less set karega, tab link active hoga.');
