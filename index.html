@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#4F46E5">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
@@ -109,8 +110,9 @@ tbody tr:last-child td{border-bottom:none;}
 <body>
 <div id="view"></div>
 <script>
-// ══════════ CONFIG — GOOGLE SHEETS BACKEND ══════════
-const GS_URL = "https://script.google.com/macros/s/AKfycbwW1B-XDKSx_6ssJRCJlnDN_A3oJZIR4QTbMLSpCKsqwvbIPlEJGJ9T5U1d71nEOyx_KA/exec";  // Apps Script Web App /exec URL
+// ══════════ CONFIG — SUPABASE BACKEND ══════════
+const SB_URL = "https://thmbyzgccgedtxxwluii.supabase.co";
+const SB_KEY = "sb_publishable_X0lsfupRNvTqIyqthEDkLg_6nWlGVuH";
 const ADMIN_PASS = "ddl@admin";
 const REFUND_WAIT_DAYS = 5;
 const ADMIN_CODE = "DDL";
@@ -118,11 +120,12 @@ const ADMIN_CODE = "DDL";
 const Q = new URLSearchParams(location.search);
 const V = document.getElementById('view');
 
-// ── Google Sheets DB layer ──
+// ── Supabase DB layer (same crm_* pattern: id + data jsonb, open RLS) ──
+const supa = window.supabase.createClient(SB_URL, SB_KEY);
 const TMAP = { ddl_mediators:'mediators', ddl_deals:'deals', ddl_orders:'orders' };
-const TSHEET = { ddl_mediators:'MEDIATORS', ddl_deals:'DEALS', ddl_orders:'ORDERS' };
+const TABLE = { ddl_mediators:'ddl_mediators', ddl_deals:'ddl_deals', ddl_orders:'ddl_orders' };
 let _cache = null, _cacheAt = 0, _pending = null;
-const CACHE_TTL = 20000; // 20s — GAS backend is slow, avoid hammering it on every tab switch
+const CACHE_TTL = 8000; // Supabase is fast — short TTL keeps multi-user data fresh without hammering it
 
 // ── Persist cache across page reloads so UI can render instantly with last-known data ──
 function persistCache(){ try{ localStorage.setItem('ddl_cache_v1', JSON.stringify({data:_cache, at:_cacheAt})); }catch(e){} }
@@ -137,10 +140,19 @@ async function loadStore(force){
   if(!force && _cache && (Date.now()-_cacheAt) < CACHE_TTL) return _cache;
   if(_pending) return _pending; // dedupe: concurrent callers share the same in-flight fetch
   _pending = (async()=>{
-    const r = await fetch(GS_URL, { method:'GET' });
-    const j = await r.json();
-    if(!j.ok){ alert('⚠️ Backend error: '+j.error); throw new Error(j.error); }
-    _cache = j.data; _cacheAt = Date.now();
+    const [m,d,o] = await Promise.all([
+      supa.from('ddl_mediators').select('data'),
+      supa.from('ddl_deals').select('data'),
+      supa.from('ddl_orders').select('data')
+    ]);
+    const err = m.error||d.error||o.error;
+    if(err){ alert('⚠️ Backend error: '+err.message); throw err; }
+    _cache = {
+      mediators: (m.data||[]).map(r=>r.data),
+      deals: (d.data||[]).map(r=>r.data),
+      orders: (o.data||[]).map(r=>r.data)
+    };
+    _cacheAt = Date.now();
     persistCache();
     return _cache;
   })();
@@ -153,15 +165,26 @@ async function dbAll(t,force){
   try { const st = await loadStore(force); return st[TMAP[t]] || []; }
   catch(e){ console.error(e); return []; }
 }
-async function gsPost(payload){
-  const r = await fetch(GS_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
-  const j = await r.json();
-  if(!j.ok){ alert('❌ '+(j.error||'Save failed')); throw new Error(j.error); }
-  return j;
+async function dbIns(t,o){
+  const { data, error } = await supa.from(TABLE[t]).insert({ id:o.id, data:o }).select().single();
+  if(error){ alert('❌ '+error.message); throw error; }
+  const saved = data.data;
+  if(_cache){ (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); persistCache(); }
+  return saved;
 }
-async function dbIns(t,o){ const r=await gsPost({action:'insert', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); persistCache(); } return saved; }
-async function dbUpd(t,o){ const r=await gsPost({action:'update', table:TSHEET[t], id:o.id, obj:o}); const saved=r.obj||o; if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; persistCache(); } return saved; }
-async function dbDel(t,id){ await gsPost({action:'delete', table:TSHEET[t], id}); if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); persistCache(); } }
+async function dbUpd(t,o){
+  const { data, error } = await supa.from(TABLE[t]).update({ data:o }).eq('id',o.id).select().single();
+  if(error){ alert('❌ '+error.message); throw error; }
+  const saved = data.data;
+  if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; persistCache(); }
+  return saved;
+}
+async function dbDel(t,id){
+  const { error } = await supa.from(TABLE[t]).delete().eq('id',id);
+  if(error){ alert('❌ '+error.message); throw error; }
+  if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); persistCache(); }
+}
+
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function today(){ return new Date().toISOString().split('T')[0]; }
