@@ -116,6 +116,15 @@ tbody tr:last-child td{border-bottom:none;}
 .slot-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--text-3);margin:6px 0 10px;align-items:center;}
 .slot-legend span{display:inline-flex;align-items:center;gap:4px;}
 .slot-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
+.deal-tile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;margin-bottom:16px;}
+.deal-tile{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px 8px;text-align:center;cursor:pointer;transition:border-color .15s,transform .1s;}
+.deal-tile:active{transform:scale(.96);}
+.deal-tile.open{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-light);}
+.deal-tile.full{background:var(--accent-light);border-color:var(--accent);}
+.dt-code{font-weight:800;font-family:Sora;font-size:15px;color:var(--primary);}
+.dt-name{font-size:10.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0;}
+.dt-count{font-size:12px;font-weight:700;}
+.dt-pend{color:var(--warn);margin-left:3px;}
 </style>
 </head>
 <body>
@@ -176,25 +185,63 @@ async function dbAll(t,force){
   try { const st = await loadStore(force); return st[TMAP[t]] || []; }
   catch(e){ console.error(e); return []; }
 }
+// ── Universal saving indicator (color pill, top of screen) so user always knows if a submit went through ──
+function saveIndicator(){
+  let el=document.getElementById('save-indicator');
+  if(!el){
+    el=document.createElement('div'); el.id='save-indicator';
+    el.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;padding:9px 18px;border-radius:20px;font-family:Manrope;font-weight:800;font-size:12.5px;box-shadow:var(--shadow-md);transition:background .15s,color .15s;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function saveStart(){
+  const el=saveIndicator();
+  el.style.background='#FEF3C7'; el.style.color='#92400E'; el.textContent='💾 Saving...'; el.style.display='block';
+  return el;
+}
+function saveOk(){
+  const el=saveIndicator();
+  el.style.background='#D1FAE5'; el.style.color='#065F46'; el.textContent='✅ Saved'; el.style.display='block';
+  clearTimeout(el._t); el._t=setTimeout(()=>{ el.style.display='none'; },1100);
+}
+function saveErr(msg){
+  const el=saveIndicator();
+  el.style.background='#FFE4E6'; el.style.color='#BE123C'; el.textContent='❌ '+(msg||'Failed — try again'); el.style.display='block';
+  clearTimeout(el._t); el._t=setTimeout(()=>{ el.style.display='none'; },2800);
+}
 async function dbIns(t,o){
-  const { data, error } = await supa.from(TABLE[t]).insert({ id:o.id, data:o }).select().single();
-  if(error){ alert('❌ '+error.message); throw error; }
-  const saved = data.data;
-  if(_cache){ (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); persistCache(); }
-  return saved;
+  saveStart();
+  try{
+    const { data, error } = await supa.from(TABLE[t]).insert({ id:o.id, data:o }).select().single();
+    if(error){ saveErr(error.message); alert('❌ '+error.message); throw error; }
+    const saved = data.data;
+    if(_cache){ (_cache[TMAP[t]]=_cache[TMAP[t]]||[]).push(saved); persistCache(); }
+    saveOk();
+    return saved;
+  }catch(e){ saveErr(); throw e; }
 }
 async function dbUpd(t,o){
-  const { data, error } = await supa.from(TABLE[t]).update({ data:o }).eq('id',o.id).select().single();
-  if(error){ alert('❌ '+error.message); throw error; }
-  const saved = data.data;
-  if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; persistCache(); }
-  return saved;
+  saveStart();
+  try{
+    const { data, error } = await supa.from(TABLE[t]).update({ data:o }).eq('id',o.id).select().single();
+    if(error){ saveErr(error.message); alert('❌ '+error.message); throw error; }
+    const saved = data.data;
+    if(_cache){ const a=_cache[TMAP[t]]||[]; const i=a.findIndex(x=>x.id===o.id); if(i>-1)a[i]=saved; persistCache(); }
+    saveOk();
+    return saved;
+  }catch(e){ saveErr(); throw e; }
 }
 async function dbDel(t,id){
-  const { error } = await supa.from(TABLE[t]).delete().eq('id',id);
-  if(error){ alert('❌ '+error.message); throw error; }
-  if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); persistCache(); }
+  saveStart();
+  try{
+    const { error } = await supa.from(TABLE[t]).delete().eq('id',id);
+    if(error){ saveErr(error.message); alert('❌ '+error.message); throw error; }
+    if(_cache){ _cache[TMAP[t]]=(_cache[TMAP[t]]||[]).filter(x=>x.id!==id); persistCache(); }
+    saveOk();
+  }catch(e){ saveErr(); throw e; }
 }
+
 
 
 function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -444,7 +491,13 @@ async function handleChat(input){
   if(s.step==='o_orderid'){
     const all=await dbAll('ddl_orders');
     if(all.find(o=>o.orderId===input)){ botSay('⚠️ Yeh Order ID already registered hai!'); mainMenu(''); return; }
-    s.order.orderId=input; s.order.platform='';
+    s.order.orderId=input;
+    s.step='o_amount'; botSay('💰 Order kitne ka tha? Amount daaliye (₹):'); return;
+  }
+  if(s.step==='o_amount'){
+    const amt=+input.replace(/[^\d.]/g,'');
+    if(!amt||amt<=0){ botSay('❌ Valid amount daaliye (e.g. 499):'); return; }
+    s.order.amount=amt; s.order.platform='';
     s.step='o_platform'; botSay('Kis platform se order kiya?'); showOpts(['Meesho','Amazon','Flipkart']); return;
   }
   if(s.step==='o_platform'){ s.order.platform=input; s.step='o_shot'; botSay('Order ka screenshot upload karein: 📸'); showUpload(); return; }
@@ -455,7 +508,7 @@ async function handleChat(input){
     o=await dbIns('ddl_orders',o)||o;
     botSay('🎉 Order successfully registered!\n\nYeh raha aapka current status: 👇');
     botSay(statusView(o),true);
-    botSay('✅ Confirm ho gaya! '+REFUND_WAIT_DAYS+' din baad review/rating karke Refund Form bharein. Order ID sambhal ke rakhein: '+o.orderId);
+    botSay('✅ Confirm ho gaya! Review/rating karke Refund Form bharein. Order ID sambhal ke rakhein: '+o.orderId);
     mainMenu(''); return;
   }
   // REFUND FLOW
@@ -466,8 +519,6 @@ async function handleChat(input){
     botSay(statusView(o),true);
     if(o.status==='Refunded'){ mainMenu(''); return; }
     if(o.status==='Refund Form Filled'){ botSay('⏳ Refund form already submitted hai.'); mainMenu(''); return; }
-    const days=daysBetween(o.orderDate,today());
-    if(days<REFUND_WAIT_DAYS){ botSay('⏳ Refund form '+REFUND_WAIT_DAYS+' din baad khulega.\nAbhi '+days+' din hue — '+(REFUND_WAIT_DAYS-days)+' din baaki.\nTab tak review/rating kar dein! ⭐'); mainMenu(''); return; }
     s.refOrder=o; s.step='r_type';
     botSay('✅ Refund form khul gaya!\n\nAapne kya kiya hai — Rating ya Review?\n\n⭐ Rating → Rating + Seller Feedback dono screenshots dene honge\n📝 Review → sirf Review screenshot');
     showOpts(['⭐ Rating','📝 Review']); return;
@@ -537,7 +588,7 @@ async function clientSearch(){
 
 // ══════════ MEDIATOR ══════════
 let MED=null;
-function renderMediator(){
+async function renderMediator(){
   V.innerHTML=`<div class="wrap">
     <div class="topbrand"><div class="brand">🤝 DDL Mediator Portal</div><div class="sub">Deals · Orders · Wallet</div></div>
     <div class="card" id="med-auth" style="max-width:440px;margin:0 auto;">
@@ -546,6 +597,18 @@ function renderMediator(){
     </div>
     <div id="med-dash"></div>
   </div>`;
+  const savedCode=localStorage.getItem('ddl_med_code');
+  if(savedCode){
+    const all=await dbAll('ddl_mediators');
+    const m=all.find(x=>x.code===savedCode);
+    if(m){
+      MED=m;
+      document.getElementById('med-auth').classList.add('hidden');
+      medDash();
+      startSlotWatch();
+      return;
+    } else localStorage.removeItem('ddl_med_code');
+  }
   medTab('login');
 }
 function medTab(t){
@@ -580,9 +643,14 @@ async function medLogin(){
   const m=all.find(x=>x.code===code&&x.pass===pass);
   if(!m){alert('❌ Wrong code ya password!');return;}
   MED=m;
+  localStorage.setItem('ddl_med_code',m.code);
   document.getElementById('med-auth').classList.add('hidden');
   medDash();
   startSlotWatch();
+}
+function medLogout(){
+  localStorage.removeItem('ddl_med_code');
+  location.href='?v=home';
 }
 async function medDash(force){
   const dash=document.getElementById('med-dash');
@@ -634,11 +702,11 @@ async function medDash(force){
     <div class="card">
       <div style="font-weight:800;font-family:Sora;margin-bottom:14px;">📦 My Orders (${orders.length})</div>
       ${orders.length? `<div class="table-wrap"><table>
-        <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Product</th><th>Status</th><th>My Cut</th></tr></thead>
-        <tbody>${orders.map(o=>`<tr><td>${esc(o.orderDate)}</td><td>${esc(o.name)}</td><td>${esc(o.orderId)}</td><td>${esc(o.productCode)}</td><td>${statusBadge(o.status)}</td><td>${o.status==='Refunded'?'<span class="badge b-green">₹'+esc(o.cut)+' ✓ wallet</span>':'<span class="badge b-gray">₹'+esc(o.cut)+' pending</span>'}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Amount</th><th>Product</th><th>Status</th><th>My Cut</th></tr></thead>
+        <tbody>${orders.map(o=>`<tr><td>${esc(o.orderDate)}</td><td>${esc(o.name)}</td><td>${esc(o.orderId)}</td><td>₹${esc(o.amount||'—')}</td><td>${esc(o.productCode)}</td><td>${statusBadge(o.status)}</td><td>${o.status==='Refunded'?'<span class="badge b-green">₹'+esc(o.cut)+' ✓ wallet</span>':'<span class="badge b-gray">₹'+esc(o.cut)+' pending</span>'}</td></tr>`).join('')}</tbody>
       </table></div>`:'<div class="muted">Abhi koi order nahi.</div>'}
     </div>
-    <button class="btn btn-outline" onclick="location.reload()">🚪 Logout</button>`;
+    <button class="btn btn-outline" onclick="medLogout()">🚪 Logout</button>`;
   window._offers=myOffers; window._medOrders=orders;
 }
 async function setBuyerLess(offerId){
@@ -739,10 +807,16 @@ function shareOffer(offerId, from){
 
 // ══════════ ADMIN ══════════
 function renderAdmin(){
+  if(localStorage.getItem('ddl_admin_auth')==='1'){ adminMain('orders'); startSlotWatch(); return; }
   const p=prompt('Admin password:');
   if(p!==ADMIN_PASS){ V.innerHTML='<div class="wrap"><div class="alert a-err">❌ Wrong password</div></div>'; return; }
+  localStorage.setItem('ddl_admin_auth','1');
   adminMain('orders');
   startSlotWatch();
+}
+function adminLogout(){
+  localStorage.removeItem('ddl_admin_auth');
+  location.href='?v=home';
 }
 async function adminMain(tab,force){
   window._curAdminTab=tab;
@@ -766,7 +840,7 @@ async function adminMain(tab,force){
       <button class="${tab==='deals'?'on':''}" onclick="adminMain('deals')">🎁 Deals</button>
       <button class="${tab==='meds'?'on':''}" onclick="adminMain('meds')">🤝 Mediators</button>
     </div>
-    <div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminMain('${tab}',true)">🔄 Refresh</button></div>
+    <div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminMain('${tab}',true)">🔄 Refresh</button> <button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminLogout()">🚪 Logout</button></div>
     <div id="admin-body"></div>
   </div>`;
   ({orders:adminOrders,deals:adminDeals,meds:adminMeds}[tab])();
@@ -776,11 +850,12 @@ function adminOrders(){
   document.getElementById('admin-body').innerHTML= orders.length===0
     ? '<div class="alert a-warn">Abhi koi order nahi.</div>'
     : `<div class="table-wrap"><table>
-      <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Product</th><th>Mediator</th><th>Less (B/A/Cut)</th><th>UPI</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Amount</th><th>Product</th><th>Mediator</th><th>Less (B/A/Cut)</th><th>UPI</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>${[...orders].reverse().map(o=>`<tr>
         <td>${esc(o.orderDate)}</td>
         <td>${esc(o.name)}<div class="muted">${esc(o.gmail)}</div></td>
         <td>${esc(o.orderId)}</td>
+        <td>₹${esc(o.amount||'—')}</td>
         <td>${esc(o.productCode)}</td>
         <td>${esc(o.mediatorCode)}</td>
         <td><span class="badge b-pink">₹${esc(o.buyerLess)}</span> <span class="badge b-yellow">₹${esc(o.adminLess)}</span> <span class="badge b-green">₹${esc(o.cut)}</span></td>
@@ -796,10 +871,10 @@ function adminOrders(){
       <div class="muted" style="margin-top:8px;">Less columns: <strong>B</strong>=Buyer Less · <strong>A</strong>=Admin Less (mera) · <strong>Cut</strong>=Mediator ka</div>`;
 }
 function adminDeals(){
-  const {deals,meds,orders}=window._D;
+  const {deals}=window._D;
   const masters=deals.filter(d=>d.type==='master');
   const offers=deals.filter(d=>d.type==='offer');
-  const b=baseUrl();
+  const openId=window._openDealId;
   document.getElementById('admin-body').innerHTML=`
     <div class="card">
       <div style="font-weight:800;font-family:Sora;margin-bottom:12px;">➕ New Master Deal</div>
@@ -816,41 +891,70 @@ function adminDeals(){
       </div>
       <button class="btn btn-grad" onclick="createMaster()">💾 Create Deal</button>
     </div>
+    <div class="muted" style="margin-bottom:8px;">📦 ${masters.length} Deals — tile tap karke full detail dekhein</div>
+    <div class="deal-tile-grid">
     ${masters.map(m=>{
       const mOffers=offers.filter(o=>o.dealId===m.id);
-      const mOrders=orders.filter(o=>o.dealId===m.id);
-      return `<div class="card">
-        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-          <div style="font-weight:800;font-family:Sora;">${esc(m.productName)} <span class="badge b-blue">${esc(m.productCode)}</span></div>
-          <div><span class="badge b-gray">₹${esc(m.price)}</span> <span class="badge b-blue">Total Qty ${esc(m.qty||'∞')}</span> <span class="badge b-yellow">Assigned ${mOffers.reduce((s2,o2)=>s2+(+o2.qty||0),0)}</span> <span class="badge b-green">${mOrders.length} orders</span></div>
-        </div>
-        ${m.image?`<img src="${m.image}" style="max-width:110px;border-radius:10px;margin-bottom:10px;border:1px solid var(--border);">`:''}
-        <div style="background:#F8F7FE;border-radius:12px;padding:12px;margin-bottom:10px;">
-          <div class="muted" style="margin-bottom:8px;font-weight:800;">ASSIGN / SHARE:</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <select id="as-med-${m.id}" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
-              <option value="${ADMIN_CODE}">🏠 Apna Group (${ADMIN_CODE})</option>
-              ${meds.map(md=>`<option value="${esc(md.code)}">${esc(md.name)} (${esc(md.code)})</option>`).join('')}
-            </select>
-            <input id="as-less-${m.id}" type="number" placeholder="Admin Less ₹" style="width:120px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
-            <input id="as-qty-${m.id}" type="number" placeholder="Qty" style="width:80px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
-            <button class="btn btn-sm btn-grad" style="width:auto;" onclick="assignOffer('${m.id}')">🎯 Assign</button>
-          </div>
-          <div class="muted" style="margin-top:6px;">Apne group ke liye: Admin Less = Buyer Less (direct). Mediator ke liye: full refund dena ho toh 0 daalo.</div>
-        </div>
-        ${mOffers.map(of=>{
-          const slots=getSlots(of);
-          const openC=slots.filter(s=>s.status==='open').length, pendC=slots.filter(s=>s.status==='pending').length, confC=slots.filter(s=>s.status==='confirmed').length;
-          return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
-            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
-              <div><strong>${esc(of.mediatorCode)}</strong> · Admin Less <span class="badge b-yellow">₹${esc(of.adminLess)}</span> · Buyer Less ${of.buyerLess!=null?'<span class="badge b-pink">₹'+esc(of.buyerLess)+'</span>':'<span class="badge b-gray">not set</span>'} ${of.buyerLess!=null?'· Cut <span class="badge b-green">₹'+(of.buyerLess-of.adminLess)+'</span>':''}</div>
-              <div><span class="badge b-red">🔴${openC}</span> ${pendC?'<span class="badge b-yellow">🟡'+pendC+'</span> ':''}<span class="badge b-green">🟢${confC}</span> ${of.buyerLess!=null?`<button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','admin')">📲 Share</button> `:''}<button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
-            </div>
-            ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>${renderSlotGrid(of)}`:''}
-          </div>`;
-        }).join('')||'<div class="muted">Abhi kisi ko assign nahi kiya.</div>'}
+      let totalSlots=0,confSlots=0,pendSlots=0;
+      mOffers.forEach(of=>{ const sl=getSlots(of); totalSlots+=sl.length; confSlots+=sl.filter(x=>x.status==='confirmed').length; pendSlots+=sl.filter(x=>x.status==='pending').length; });
+      const full=totalSlots>0&&confSlots>=totalSlots;
+      return `<div class="deal-tile ${openId===m.id?'open':''} ${full?'full':''}" onclick="toggleDealDetail('${m.id}')">
+        <div class="dt-code">${esc(m.productCode)}</div>
+        <div class="dt-name">${esc(m.productName)}</div>
+        <div class="dt-count">${confSlots}/${totalSlots||'∞'}${pendSlots?' <span class="dt-pend">🟡'+pendSlots+'</span>':''}</div>
       </div>`;
-    }).join('')||'<div class="alert a-warn">Abhi koi master deal nahi. Upar se banao!</div>'}`;
+    }).join('')||'<div class="alert a-warn">Abhi koi master deal nahi. Upar se banao!</div>'}
+    </div>
+    <div id="deal-detail">${openId?renderDealDetail(openId):''}</div>`;
+}
+function toggleDealDetail(id){
+  window._openDealId=window._openDealId===id?null:id;
+  adminDeals();
+  if(window._openDealId){ setTimeout(()=>{ const el=document.getElementById('deal-detail'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },50); }
+}
+function renderDealDetail(id){
+  const {deals,meds,orders}=window._D;
+  const m=deals.find(d=>d.id===id&&d.type==='master'); if(!m) return '';
+  const mOffers=deals.filter(o=>o.type==='offer'&&o.dealId===id);
+  const mOrders=orders.filter(o=>o.dealId===id);
+  const b=baseUrl();
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+      <div style="font-weight:800;font-family:Sora;">${esc(m.productName)} <span class="badge b-blue">${esc(m.productCode)}</span></div>
+      <div><span class="badge b-gray">₹${esc(m.price)}</span> <span class="badge b-blue">Total Qty ${esc(m.qty||'∞')}</span> <span class="badge b-yellow">Assigned ${mOffers.reduce((s2,o2)=>s2+(+o2.qty||0),0)}</span> <span class="badge b-green">${mOrders.length} orders</span></div>
+    </div>
+    ${m.image?`<img src="${m.image}" style="max-width:110px;border-radius:10px;margin-bottom:10px;border:1px solid var(--border);">`:''}
+    <div style="background:#F8F7FE;border-radius:12px;padding:12px;margin-bottom:10px;">
+      <div class="muted" style="margin-bottom:8px;font-weight:800;">ASSIGN / SHARE:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select id="as-med-${m.id}" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
+          <option value="${ADMIN_CODE}">🏠 Apna Group (${ADMIN_CODE})</option>
+          ${meds.map(md=>`<option value="${esc(md.code)}">${esc(md.name)} (${esc(md.code)})</option>`).join('')}
+        </select>
+        <input id="as-less-${m.id}" type="number" placeholder="Admin Less ₹" style="width:120px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
+        <input id="as-qty-${m.id}" type="number" placeholder="Qty" style="width:80px;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:Manrope;">
+        <button class="btn btn-sm btn-grad" style="width:auto;" onclick="assignOffer('${m.id}')">🎯 Assign</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">Apne group ke liye: Admin Less = Buyer Less (direct). Mediator ke liye: full refund dena ho toh 0 daalo.</div>
+    </div>
+    ${mOffers.map(of=>{
+      const slots=getSlots(of);
+      const openC=slots.filter(s=>s.status==='open').length, pendC=slots.filter(s=>s.status==='pending').length, confC=slots.filter(s=>s.status==='confirmed').length;
+      return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+          <div><strong>${esc(of.mediatorCode)}</strong> · Admin Less <span class="badge b-yellow">₹${esc(of.adminLess)}</span> · Buyer Less ${of.buyerLess!=null?'<span class="badge b-pink">₹'+esc(of.buyerLess)+'</span>':'<span class="badge b-gray">not set</span>'} ${of.buyerLess!=null?'· Cut <span class="badge b-green">₹'+(of.buyerLess-of.adminLess)+'</span>':''}</div>
+          <div><span class="badge b-red">🔴${openC}</span> ${pendC?'<span class="badge b-yellow">🟡'+pendC+'</span> ':''}<span class="badge b-green">🟢${confC}</span> ${of.buyerLess!=null?`<button class="btn btn-sm btn-green" onclick="shareOffer('${of.id}','admin')">📲 Share</button> `:''}<button class="btn btn-sm btn-danger" onclick="delOffer('${of.id}')">🗑</button></div>
+        </div>
+        ${of.buyerLess!=null?`<div class="copybox" onclick="copyTxt(this)" style="margin:6px 0 0;">${b}?v=buyer&deal=${of.id}</div>${renderSlotGrid(of)}`:''}
+      </div>`;
+    }).join('')||'<div class="muted">Abhi kisi ko assign nahi kiya.</div>'}
+    <div style="font-weight:800;font-family:Sora;margin:14px 0 8px;">📋 Orders (${mOrders.length})</div>
+    ${mOrders.length?`<div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Name</th><th>Order ID</th><th>Amount</th><th>Platform</th><th>Mediator</th><th>Status</th></tr></thead>
+      <tbody>${mOrders.map(o=>`<tr><td>${esc(o.orderDate)}</td><td>${esc(o.name)}</td><td>${esc(o.orderId)}</td><td>₹${esc(o.amount||'—')}</td><td>${esc(o.platform)}</td><td>${esc(o.mediatorCode||'—')}</td><td>${statusBadge(o.status)}</td></tr>`).join('')}</tbody>
+    </table></div>`:'<div class="muted">Abhi koi order nahi.</div>'}
+    <button class="btn btn-outline" style="margin-top:10px;" onclick="toggleDealDetail('${m.id}')">✖ Close</button>
+  </div>`;
 }
 async function createMaster(){
   const pc=document.getElementById('md-pc').value.trim().toUpperCase();
