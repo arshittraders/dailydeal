@@ -919,8 +919,10 @@ function adminPayments(){
         <div style="font-weight:800;margin-bottom:8px;word-break:break-all;">💳 ${esc(g.upi)}</div>
         ${g.orders.map(o=>{
           const amt=(+((o.refund&&o.refund.amount)||o.amount||0))||0;
-          return `<div style="background:#F8F7FE;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12.5px;">
-            <div><strong>₹${amt}</strong> — ${esc(o.name)}</div>
+          const origAmt=+o.amount||0;
+          const mismatch=origAmt&&Math.abs(amt-origAmt)>1;
+          return `<div style="background:${mismatch?'#FFF1F2':'#F8F7FE'};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12.5px;${mismatch?'border:1px solid var(--danger);':''}">
+            <div><strong>Refund: ₹${amt}</strong> ${mismatch?'<span class="badge b-red">⚠️ Order Amt: ₹'+origAmt+'</span>':'<span class="muted">(Order Amt: ₹'+origAmt+')</span>'} — ${esc(o.name)}</div>
             <div class="muted">📅 ${esc(o.refund.filledDate||o.orderDate)} · 📦 ${esc(o.orderId)} · 🏷 ${esc(o.productCode)}</div>
           </div>`;
         }).join('')}
