@@ -156,21 +156,35 @@ function persistCache(){ try{ localStorage.setItem('ddl_cache_v1', JSON.stringif
   }catch(e){}
 })();
 
+async function fetchAllRows(table){
+  const first = await supa.from(table).select('data',{count:'exact'}).range(0,999);
+  if(first.error) throw first.error;
+  let all = first.data||[];
+  const total = first.count!=null ? first.count : all.length;
+  if(total>1000){
+    const pages=[];
+    for(let from=1000; from<total; from+=1000) pages.push(supa.from(table).select('data').range(from, from+999));
+    const results = await Promise.all(pages);
+    for(const r of results){ if(r.error) throw r.error; all=all.concat(r.data||[]); }
+  }
+  return all;
+}
 async function loadStore(force){
   if(!force && _cache && (Date.now()-_cacheAt) < CACHE_TTL) return _cache;
   if(_pending) return _pending; // dedupe: concurrent callers share the same in-flight fetch
   _pending = (async()=>{
-    const [m,d,o] = await Promise.all([
-      supa.from('ddl_mediators').select('data'),
-      supa.from('ddl_deals').select('data'),
-      supa.from('ddl_orders').select('data')
-    ]);
-    const err = m.error||d.error||o.error;
-    if(err){ alert('⚠️ Backend error: '+err.message); throw err; }
+    let m,d,o;
+    try{
+      [m,d,o] = await Promise.all([
+        fetchAllRows('ddl_mediators'),
+        fetchAllRows('ddl_deals'),
+        fetchAllRows('ddl_orders')
+      ]);
+    }catch(err){ alert('⚠️ Backend error: '+err.message); throw err; }
     _cache = {
-      mediators: (m.data||[]).map(r=>r.data),
-      deals: (d.data||[]).map(r=>r.data),
-      orders: (o.data||[]).map(r=>r.data)
+      mediators: m.map(r=>r.data),
+      deals: d.map(r=>r.data),
+      orders: o.map(r=>r.data)
     };
     _cacheAt = Date.now();
     persistCache();
