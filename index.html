@@ -549,11 +549,12 @@ async function handleChat(input){
     if(!input.includes('@')){ botSay('❌ Valid UPI ID daaliye (e.g. name@paytm):'); return; }
     botSay('⏳ Submit ho raha hai...');
     const o=s.refOrder;
+    const expected=(o.buyerLess!=null)?((+o.price||0)-(+o.buyerLess||0)):(+o.amount||+o.price||0);
     o.status='Refund Form Filled';
-    o.refund={ upi:input, type:s.refType, shots:[...s.refShots], filledDate:today() };
+    o.refund={ upi:input, type:s.refType, shots:[...s.refShots], filledDate:today(), amount:expected };
     o.history=o.history||[]; o.history.push({s:'Refund Form Filled',d:today()});
     await dbUpd('ddl_orders',o);
-    botSay('🎉 Refund form submitted!\n\n📋 Type: '+s.refType+'\n💳 UPI: '+input+'\n💵 Expected: ₹'+((+o.price||0)-(+o.buyerLess||0))+'\n\nAdmin verify karke refund karega. Order ID daal kar kabhi bhi status check karein — Done hone par yahin dikhega, koi dikkat hui toh admin ka comment bhi yahin aayega. ✅');
+    botSay('🎉 Refund form submitted!\n\n📋 Type: '+s.refType+'\n💳 UPI: '+input+'\n💵 Expected: ₹'+expected+'\n\nAdmin verify karke refund karega. Order ID daal kar kabhi bhi status check karein — Done hone par yahin dikhega, koi dikkat hui toh admin ka comment bhi yahin aayega. ✅');
     mainMenu(''); return;
   }
   // STATUS
@@ -851,13 +852,14 @@ async function adminMain(tab,force){
     <div style="text-align:center;margin-bottom:14px;">${alertBtnHtml('orders')} <span class="muted">Naya order aate hi alarm</span></div>
     <div class="tabbtns">
       <button class="${tab==='orders'?'on':''}" onclick="adminMain('orders')">📦 Orders</button>
+      <button class="${tab==='pay'?'on':''}" onclick="adminMain('pay')">💰 Payments</button>
       <button class="${tab==='deals'?'on':''}" onclick="adminMain('deals')">🎁 Deals</button>
       <button class="${tab==='meds'?'on':''}" onclick="adminMain('meds')">🤝 Mediators</button>
     </div>
     <div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminMain('${tab}',true)">🔄 Refresh</button> <button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminLogout()">🚪 Logout</button></div>
     <div id="admin-body"></div>
   </div>`;
-  ({orders:adminOrders,deals:adminDeals,meds:adminMeds}[tab])();
+  ({orders:adminOrders,pay:adminPayments,deals:adminDeals,meds:adminMeds}[tab])();
 }
 function adminOrders(){
   const {orders}=window._D;
@@ -883,6 +885,34 @@ function adminOrders(){
         </td>
       </tr>`).join('')}</tbody></table></div>
       <div class="muted" style="margin-top:8px;">Less columns: <strong>B</strong>=Buyer Less · <strong>A</strong>=Admin Less (mera) · <strong>Cut</strong>=Mediator ka</div>`;
+}
+function upiLink(upi,name,amt,note){
+  return 'upi://pay?pa='+encodeURIComponent(upi)+'&pn='+encodeURIComponent(name||'DDL')+'&am='+encodeURIComponent(amt)+'&cu=INR&tn='+encodeURIComponent(note||'DDL Refund');
+}
+function adminPayments(){
+  const {orders}=window._D;
+  const pending=orders.filter(o=>o.status==='Refund Form Filled'&&o.refund&&o.refund.upi);
+  const total=pending.reduce((s,o)=>s+(+((o.refund&&o.refund.amount)||o.amount||0)),0);
+  document.getElementById('admin-body').innerHTML = pending.length===0
+    ? '<div class="alert a-ok">✅ Koi payment pending nahi hai!</div>'
+    : `<div class="muted" style="margin-bottom:10px;">💰 ${pending.length} payments pending · Total <strong>₹${total}</strong></div>
+      <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Product</th><th>UPI ID</th><th>Amount</th><th>Order ID</th><th>Action</th></tr></thead>
+      <tbody>${pending.map(o=>{
+        const amt=(o.refund&&o.refund.amount)||o.amount||((+o.price||0)-(+o.buyerLess||0))||0;
+        return `<tr>
+          <td>${esc(o.name)}</td>
+          <td>${esc(o.productCode)}</td>
+          <td>${esc(o.refund.upi)}</td>
+          <td><strong>₹${esc(amt)}</strong></td>
+          <td>${esc(o.orderId)}</td>
+          <td style="white-space:nowrap;">
+            <a class="btn btn-sm btn-green" style="display:inline-block;text-decoration:none;" href="${upiLink(o.refund.upi,o.name,amt,'DDL Refund '+o.orderId)}">📲 Pay Now</a>
+            <button class="btn btn-sm btn-outline" onclick="adminRefund('${o.id}')">✅ Mark Paid</button>
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table></div>
+      <div class="muted" style="margin-top:8px;">📲 Pay Now → UPI app khulega (GPay/PhonePe/Paytm) amount pre-filled ke saath. Payment ke baad <strong>✅ Mark Paid</strong> zaroor dabana — warna yeh list mein pending hi rahega.</div>`;
 }
 function adminDeals(){
   const {deals}=window._D;
@@ -1040,7 +1070,7 @@ async function adminRefund(id){
   o.history=o.history||[]; o.history.push({s:'Refunded',d:today()});
   await dbUpd('ddl_orders',o);
   alert('✅ Refunded ₹'+amt+'!\n'+(o.cut>0?('Mediator '+o.mediatorCode+' ke wallet mein ₹'+o.cut+' add ho gaya.'):''));
-  adminMain('orders');
+  adminMain(window._curAdminTab||'orders',true);
 }
 async function adminNote(id){
   const o=window._D.orders.find(x=>x.id===id); if(!o)return;
