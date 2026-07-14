@@ -891,28 +891,61 @@ function upiLink(upi,name,amt,note){
 }
 function adminPayments(){
   const {orders}=window._D;
-  const pending=orders.filter(o=>o.status==='Refund Form Filled'&&o.refund&&o.refund.upi);
-  const total=pending.reduce((s,o)=>s+(+((o.refund&&o.refund.amount)||o.amount||0)),0);
-  document.getElementById('admin-body').innerHTML = pending.length===0
-    ? '<div class="alert a-ok">✅ Koi payment pending nahi hai!</div>'
-    : `<div class="muted" style="margin-bottom:10px;">💰 ${pending.length} payments pending · Total <strong>₹${total}</strong></div>
-      <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Product</th><th>UPI ID</th><th>Amount</th><th>Order ID</th><th>Action</th></tr></thead>
-      <tbody>${pending.map(o=>{
-        const amt=(o.refund&&o.refund.amount)||o.amount||((+o.price||0)-(+o.buyerLess||0))||0;
-        return `<tr>
-          <td>${esc(o.name)}</td>
-          <td>${esc(o.productCode)}</td>
-          <td>${esc(o.refund.upi)}</td>
-          <td><strong>₹${esc(amt)}</strong></td>
-          <td>${esc(o.orderId)}</td>
-          <td style="white-space:nowrap;">
-            <a class="btn btn-sm btn-green" style="display:inline-block;text-decoration:none;" href="${upiLink(o.refund.upi,o.name,amt,'DDL Refund '+o.orderId)}">📲 Pay Now</a>
-            <button class="btn btn-sm btn-outline" onclick="adminRefund('${o.id}')">✅ Mark Paid</button>
-          </td>
-        </tr>`;
-      }).join('')}</tbody></table></div>
-      <div class="muted" style="margin-top:8px;">📲 Pay Now → UPI app khulega (GPay/PhonePe/Paytm) amount pre-filled ke saath. Payment ke baad <strong>✅ Mark Paid</strong> zaroor dabana — warna yeh list mein pending hi rahega.</div>`;
+  if(!window._payLimitDate){
+    const d=new Date(); d.setDate(d.getDate()-2);
+    window._payLimitDate=d.toISOString().split('T')[0];
+  }
+  const limitDate=window._payLimitDate;
+  // Clean pending only: Refund Form Filled, has UPI, NO admin note/flag, and dated on/before the backlog limit
+  const pending=orders.filter(o=>o.status==='Refund Form Filled'&&o.refund&&o.refund.upi&&!o.adminNote&&(o.refund.filledDate||o.orderDate||'9999-99-99')<=limitDate);
+  const groups={};
+  pending.forEach(o=>{
+    const upi=o.refund.upi.trim();
+    const amt=(+((o.refund&&o.refund.amount)||o.amount||0))||0;
+    if(!groups[upi]) groups[upi]={upi,orders:[],total:0};
+    groups[upi].orders.push(o); groups[upi].total+=amt;
+  });
+  const groupList=Object.values(groups).sort((a,b)=>b.total-a.total);
+  const grandTotal=groupList.reduce((s,g)=>s+g.total,0);
+  document.getElementById('admin-body').innerHTML=`
+    <div class="card" style="margin-bottom:14px;">
+      <label style="font-weight:800;font-size:12.5px;">📅 Backlog Limit Date (is date tak ki saari pending):</label>
+      <input type="date" id="pay-limit-date" value="${limitDate}" onchange="window._payLimitDate=this.value;adminMain('pay');" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;margin-top:6px;font-family:Manrope;">
+    </div>
+    ${groupList.length===0?'<div class="alert a-ok">✅ Koi clean payment pending nahi hai (is date tak)!</div>':`
+    <div class="muted" style="margin-bottom:10px;">💰 ${groupList.length} UPI IDs · ${pending.length} orders · Total <strong>₹${grandTotal}</strong></div>
+    ${groupList.map(g=>`
+      <div class="card" style="border-left:4px solid var(--accent);margin-bottom:12px;">
+        <div style="font-weight:800;margin-bottom:8px;word-break:break-all;">💳 ${esc(g.upi)}</div>
+        ${g.orders.map(o=>{
+          const amt=(+((o.refund&&o.refund.amount)||o.amount||0))||0;
+          return `<div style="background:#F8F7FE;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12.5px;">
+            <div><strong>₹${amt}</strong> — ${esc(o.name)}</div>
+            <div class="muted">📅 ${esc(o.refund.filledDate||o.orderDate)} · 📦 ${esc(o.orderId)} · 🏷 ${esc(o.productCode)}</div>
+          </div>`;
+        }).join('')}
+        <div style="font-size:22px;font-weight:800;color:var(--accent);margin:8px 0;">₹${g.total}</div>
+        <a class="btn btn-sm btn-green" style="display:block;text-align:center;text-decoration:none;margin-bottom:6px;" href="${upiLink(g.upi,g.orders[0].name,g.total,'DDL Refund x'+g.orders.length)}">📲 Pay Now (₹${g.total})</a>
+        <button class="btn btn-sm btn-outline" style="width:100%;" onclick="markGroupPaid('${g.upi.replace(/'/g,"\\'")}')">✅ Mark All Paid (${g.orders.length})</button>
+      </div>
+    `).join('')}
+    `}
+    <div class="muted" style="margin-top:8px;">Sirf clean "Refund Form Filled" orders dikhte hain jinpe koi note/flag nahi hai, aur jo backlog date se pehle ke hain. Koi issue wale order ko Orders tab mein 📢 se note daal do — yahan se hat jayega.</div>`;
+}
+async function markGroupPaid(upi){
+  const {orders}=window._D;
+  const limitDate=window._payLimitDate;
+  const group=orders.filter(o=>o.status==='Refund Form Filled'&&o.refund&&o.refund.upi&&o.refund.upi.trim()===upi&&!o.adminNote&&(o.refund.filledDate||o.orderDate||'9999-99-99')<=limitDate);
+  if(!group.length) return;
+  if(!confirm(group.length+' orders — UPI '+upi+'\n\nSabko PAID mark karna hai?')) return;
+  for(const o of group){
+    o.status='Refunded';
+    o.refund.refundedDate=today();
+    o.history=o.history||[]; o.history.push({s:'Refunded',d:today()});
+    await dbUpd('ddl_orders',o);
+  }
+  alert('✅ '+group.length+' orders PAID mark ho gaye!');
+  adminMain('pay',true);
 }
 function adminDeals(){
   const {deals}=window._D;
