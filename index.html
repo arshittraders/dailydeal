@@ -365,7 +365,7 @@ function showSlotGrid(of){
         w.remove(); userSay('Slot #'+s.n+' select kiya');
         CS.order.offerId=of.id; CS.order.dealId=of.dealId; CS.order.productCode=of.productCode;
         CS.order.mediatorCode=of.mediatorCode; CS.order.adminLess=+of.adminLess||0; CS.order.buyerLess=+of.buyerLess||0;
-        CS.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); CS.order.price=+of.price||0;
+        CS.order.cut=(+of.buyerLess||0)-(+of.adminLess||0); CS.order.price=+of.price||0; CS.order.dealType=of.dealType||'';
         CS.grabSlot=s.n; CS.step='grab_name';
         botSay('✋ Slot #'+s.n+' choose kiya! Apna Full Name batayiye:');
       };
@@ -950,6 +950,19 @@ async function markGroupPaid(upi){
   alert('✅ '+group.length+' orders PAID mark ho gaye!');
   adminMain('pay',true);
 }
+// Empty deals: mediator gets product price refunded PLUS a fixed slab commission on top
+function ddlEmptySlab(price){
+  if(price==null) return 0;
+  const v=+price;
+  if(v<=415) return 40;
+  if(v<=816) return 50;
+  if(v<=1015) return 60;
+  if(v<=1514) return 70;
+  if(v<=2014) return 80;
+  if(v<=2514) return 100;
+  if(v<=3014) return 120;
+  return 120; // no slab defined beyond 3014 — using top slab as a best-effort estimate
+}
 function adminMediatorAudit(){
   const {orders,meds}=window._D;
   if(!window._auditMed) window._auditMed=ADMIN_CODE;
@@ -958,14 +971,20 @@ function adminMediatorAudit(){
   let totalRefunded=0,totalDealValue=0,totalCommission=0,doneCount=0,pendingCount=0,lossCount=0,unknownCount=0;
   const rows=list.map(o=>{
     const refundAmt=+((o.refund&&o.refund.amount)||0);
-    // Deal value = what admin allocated to the mediator for this order (adminLess). Legacy orders fall back to the
-    // Refunds-sheet "Order Actual Price", then the order's own paid amount, since they predate the offer-linked adminLess field.
-    const dealValue=(o.adminLess!=null)?(+o.adminLess||0)
-      :((o.refund&&o.refund.orderActualPrice!=null)?o.refund.orderActualPrice
-      :(o.amount!=null?+o.amount:null));
+    const dealType=(o.refund&&o.refund.dealType)||o.dealType||'';
+    let dealValue=null,slabUsed=0;
+    if(o.adminLess!=null){
+      // New-system orders: admin already decided the full per-order budget manually at assignment time
+      dealValue=+o.adminLess||0;
+    } else {
+      const basePrice=(o.refund&&o.refund.orderActualPrice!=null)?o.refund.orderActualPrice:(o.amount!=null?+o.amount:null);
+      if(basePrice!=null){
+        if(/EMPTY/i.test(dealType)){ slabUsed=ddlEmptySlab(basePrice); dealValue=basePrice+slabUsed; }
+        else dealValue=basePrice;
+      }
+    }
     let commission=null,flag='';
     if(dealValue!=null){
-      // Mediator's commission = what admin gave her − what she actually refunded the buyer (works for Empty/Original/Exchange alike)
       commission=dealValue-refundAmt;
       if(refundAmt>dealValue+1) flag='loss';
     } else {
@@ -977,9 +996,10 @@ function adminMediatorAudit(){
     if(refundAmt) totalRefunded+=refundAmt;
     if(dealValue) totalDealValue+=dealValue;
     if(commission) totalCommission+=commission;
-    return {o,refundAmt,dealValue,commission,flag};
+    return {o,refundAmt,dealValue,commission,flag,dealType,slabUsed};
   });
   rows.sort((a,b)=>{ var rank={loss:0,unknown:1,'':2}; return rank[a.flag]-rank[b.flag]; });
+  window._auditRows=rows;
   document.getElementById('admin-body').innerHTML=`
     <div class="card" style="margin-bottom:14px;">
       <label style="font-weight:800;font-size:12.5px;">🕵️ Mediator Chuno:</label>
@@ -1000,22 +1020,40 @@ function adminMediatorAudit(){
       <div class="stat"><div class="v" style="color:var(--danger);">${lossCount}</div><div class="k">⚠️ LOSS Rows</div></div>
       <div class="stat"><div class="v" style="color:var(--text-3);">${unknownCount}</div><div class="k">❔ Unverified</div></div>
     </div>
-    <div class="muted" style="margin:12px 0 8px;">🔴 Red = buyer ne deal value se zyada refund liya (loss) · ⚪ Grey = actual price verify nahi ho payi (purana data)</div>
+    <div class="muted" style="margin:12px 0 8px;">🔴 Red = buyer ne deal value se zyada refund liya (loss) · ⚪ Grey = actual price verify nahi ho payi (purana data) · Empty deals mein product price + slab commission dono jud kar Deal Value banta hai</div>
+    <button class="btn btn-sm btn-outline" style="width:auto;margin-bottom:10px;" onclick="exportAuditCsv()">📥 Excel/CSV Export</button>
     ${rows.length===0?'<div class="alert a-ok">Is mediator ke koi orders nahi hain.</div>':`
     <div class="table-wrap"><table>
-      <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Deal Value</th><th>Refund</th><th>Commission</th><th>Status</th></tr></thead>
+      <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Deal</th><th>Deal Value</th><th>Refund</th><th>Commission</th><th>Status</th></tr></thead>
       <tbody>${rows.map(r=>{
         const bg=r.flag==='loss'?'background:#FFF1F2;':r.flag==='unknown'?'background:#F6F5FB;':'';
         return `<tr style="${bg}">
           <td>${esc(r.o.orderDate)}</td>
           <td>${esc(r.o.name)}</td>
           <td>${esc(r.o.orderId)}</td>
-          <td>${r.dealValue!=null?'₹'+r.dealValue:'<span class="muted">❔ N/A</span>'}</td>
+          <td>${r.dealType?'<span class="badge b-blue">'+esc(r.dealType)+'</span>':'—'}</td>
+          <td>${r.dealValue!=null?'₹'+r.dealValue+(r.slabUsed?' <span class="muted">(+₹'+r.slabUsed+' slab)</span>':''):'<span class="muted">❔ N/A</span>'}</td>
           <td>₹${r.refundAmt}</td>
           <td>${r.commission!=null?('₹'+r.commission.toFixed(0)+(r.flag==='loss'?' ⚠️':'')):'—'}</td>
           <td>${statusBadge(r.o.status)}</td>
         </tr>`;
       }).join('')}</tbody></table></div>`}`;
+}
+function exportAuditCsv(){
+  const rows=window._auditRows||[];
+  if(!rows.length){ alert('Koi data nahi hai export karne ke liye.'); return; }
+  const medName=(window._D.meds.find(m=>m.code===window._auditMed)||{name:window._auditMed}).name;
+  let csv='Date,Buyer,Order ID,Deal Type,Deal Value,Refund,Commission,Status,Flag\n';
+  rows.forEach(r=>{
+    const line=[r.o.orderDate,r.o.name,r.o.orderId,r.dealType,r.dealValue!=null?r.dealValue:'N/A',r.refundAmt,r.commission!=null?r.commission.toFixed(0):'',r.o.status,r.flag||''];
+    csv+=line.map(v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"').join(',')+'\n';
+  });
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='DDL-Audit-'+medName.replace(/\s+/g,'_')+'-'+today()+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 function adminDeals(){
   const {deals}=window._D;
