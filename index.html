@@ -853,13 +853,14 @@ async function adminMain(tab,force){
     <div class="tabbtns">
       <button class="${tab==='orders'?'on':''}" onclick="adminMain('orders')">📦 Orders</button>
       <button class="${tab==='pay'?'on':''}" onclick="adminMain('pay')">💰 Payments</button>
+      <button class="${tab==='audit'?'on':''}" onclick="adminMain('audit')">📊 Audit</button>
       <button class="${tab==='deals'?'on':''}" onclick="adminMain('deals')">🎁 Deals</button>
       <button class="${tab==='meds'?'on':''}" onclick="adminMain('meds')">🤝 Mediators</button>
     </div>
     <div style="text-align:right;margin-bottom:8px;"><button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminMain('${tab}',true)">🔄 Refresh</button> <button class="btn btn-sm btn-outline" style="width:auto;" onclick="adminLogout()">🚪 Logout</button></div>
     <div id="admin-body"></div>
   </div>`;
-  ({orders:adminOrders,pay:adminPayments,deals:adminDeals,meds:adminMeds}[tab])();
+  ({orders:adminOrders,pay:adminPayments,audit:adminMediatorAudit,deals:adminDeals,meds:adminMeds}[tab])();
 }
 function adminOrders(){
   const {orders}=window._D;
@@ -948,6 +949,71 @@ async function markGroupPaid(upi){
   }
   alert('✅ '+group.length+' orders PAID mark ho gaye!');
   adminMain('pay',true);
+}
+function adminMediatorAudit(){
+  const {orders,meds}=window._D;
+  if(!window._auditMed) window._auditMed=ADMIN_CODE;
+  const medCode=window._auditMed;
+  const list=orders.filter(o=>o.mediatorCode===medCode && (o.status==='Refunded'||o.status==='Refund Form Filled'));
+  let totalRefunded=0,totalDealValue=0,totalCommission=0,doneCount=0,pendingCount=0,lossCount=0,unknownCount=0;
+  const rows=list.map(o=>{
+    const refundAmt=+((o.refund&&o.refund.amount)||0);
+    const dealValue=(o.buyerLess!=null)?(+o.price||0):((o.refund&&o.refund.orderActualPrice!=null)?o.refund.orderActualPrice:null);
+    let commission=null,flag='';
+    if(o.buyerLess!=null){
+      commission=(+o.buyerLess||0)-refundAmt;
+      if(refundAmt>(+o.buyerLess||0)+1) flag='loss';
+    } else if(dealValue!=null){
+      commission=dealValue-refundAmt;
+      if(refundAmt>dealValue+1) flag='loss';
+    } else {
+      flag='unknown';
+    }
+    if(o.status==='Refunded') doneCount++; else pendingCount++;
+    if(flag==='loss') lossCount++;
+    if(flag==='unknown') unknownCount++;
+    if(refundAmt) totalRefunded+=refundAmt;
+    if(dealValue) totalDealValue+=dealValue;
+    if(commission) totalCommission+=commission;
+    return {o,refundAmt,dealValue,commission,flag};
+  });
+  rows.sort((a,b)=>{ var rank={loss:0,unknown:1,'':2}; return rank[a.flag]-rank[b.flag]; });
+  document.getElementById('admin-body').innerHTML=`
+    <div class="card" style="margin-bottom:14px;">
+      <label style="font-weight:800;font-size:12.5px;">🕵️ Mediator Chuno:</label>
+      <select id="audit-med-sel" onchange="window._auditMed=this.value;adminMain('audit');" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;margin-top:6px;font-family:Manrope;">
+        <option value="${ADMIN_CODE}" ${medCode===ADMIN_CODE?'selected':''}>🏠 Apna Group (${ADMIN_CODE})</option>
+        ${meds.map(m=>`<option value="${esc(m.code)}" ${medCode===m.code?'selected':''}>${esc(m.name)} (${esc(m.code)})</option>`).join('')}
+      </select>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="v grad-txt">${rows.length}</div><div class="k">Total Orders</div></div>
+      <div class="stat"><div class="v" style="color:var(--accent);">₹${totalRefunded.toFixed(0)}</div><div class="k">Total Refunded</div></div>
+      <div class="stat"><div class="v">₹${totalDealValue.toFixed(0)}</div><div class="k">Total Deal Value</div></div>
+      <div class="stat"><div class="v" style="color:var(--primary);">₹${totalCommission.toFixed(0)}</div><div class="k">Mediator Commission</div></div>
+    </div>
+    <div class="stat-row" style="margin-top:10px;">
+      <div class="stat"><div class="v" style="color:var(--warn);">${pendingCount}</div><div class="k">Pending</div></div>
+      <div class="stat"><div class="v" style="color:var(--accent);">${doneCount}</div><div class="k">Done</div></div>
+      <div class="stat"><div class="v" style="color:var(--danger);">${lossCount}</div><div class="k">⚠️ LOSS Rows</div></div>
+      <div class="stat"><div class="v" style="color:var(--text-3);">${unknownCount}</div><div class="k">❔ Unverified</div></div>
+    </div>
+    <div class="muted" style="margin:12px 0 8px;">🔴 Red = buyer ne deal value se zyada refund liya (loss) · ⚪ Grey = actual price verify nahi ho payi (purana data)</div>
+    ${rows.length===0?'<div class="alert a-ok">Is mediator ke koi orders nahi hain.</div>':`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Buyer</th><th>Order ID</th><th>Deal Value</th><th>Refund</th><th>Commission</th><th>Status</th></tr></thead>
+      <tbody>${rows.map(r=>{
+        const bg=r.flag==='loss'?'background:#FFF1F2;':r.flag==='unknown'?'background:#F6F5FB;':'';
+        return `<tr style="${bg}">
+          <td>${esc(r.o.orderDate)}</td>
+          <td>${esc(r.o.name)}</td>
+          <td>${esc(r.o.orderId)}</td>
+          <td>${r.dealValue!=null?'₹'+r.dealValue:'<span class="muted">❔ N/A</span>'}</td>
+          <td>₹${r.refundAmt}</td>
+          <td>${r.commission!=null?('₹'+r.commission.toFixed(0)+(r.flag==='loss'?' ⚠️':'')):'—'}</td>
+          <td>${statusBadge(r.o.status)}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`}`;
 }
 function adminDeals(){
   const {deals}=window._D;
