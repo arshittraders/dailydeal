@@ -958,12 +958,14 @@ function adminMediatorAudit(){
   let totalRefunded=0,totalDealValue=0,totalCommission=0,doneCount=0,pendingCount=0,lossCount=0,unknownCount=0;
   const rows=list.map(o=>{
     const refundAmt=+((o.refund&&o.refund.amount)||0);
-    const dealValue=(o.buyerLess!=null)?(+o.price||0):((o.refund&&o.refund.orderActualPrice!=null)?o.refund.orderActualPrice:null);
+    // Deal value = what admin allocated to the mediator for this order (adminLess). Legacy orders fall back to the
+    // Refunds-sheet "Order Actual Price", then the order's own paid amount, since they predate the offer-linked adminLess field.
+    const dealValue=(o.adminLess!=null)?(+o.adminLess||0)
+      :((o.refund&&o.refund.orderActualPrice!=null)?o.refund.orderActualPrice
+      :(o.amount!=null?+o.amount:null));
     let commission=null,flag='';
-    if(o.buyerLess!=null){
-      commission=(+o.buyerLess||0)-refundAmt;
-      if(refundAmt>(+o.buyerLess||0)+1) flag='loss';
-    } else if(dealValue!=null){
+    if(dealValue!=null){
+      // Mediator's commission = what admin gave her − what she actually refunded the buyer (works for Empty/Original/Exchange alike)
       commission=dealValue-refundAmt;
       if(refundAmt>dealValue+1) flag='loss';
     } else {
